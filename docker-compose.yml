@@ -1,0 +1,65 @@
+name: ${COMPOSE_PROJECT_NAME:-attendance_saas}
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: attendance_saas_mysql
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    ports:
+      - "${MYSQL_PORT:-33075}:3306"
+    volumes:
+      - attendance_saas_mysql_data:/var/lib/mysql
+    networks:
+      - attendance_saas_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    container_name: attendance_saas_backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: mysql+pymysql://${MYSQL_USER}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE}?charset=utf8mb4
+      FRONTEND_ORIGIN: http://localhost:${FRONTEND_PORT:-5175}
+    ports:
+      - "${BACKEND_PORT:-8095}:8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - attendance_saas_network
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: attendance_saas_frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: http://localhost:${BACKEND_PORT:-8095}/api
+    ports:
+      - "${FRONTEND_PORT:-5175}:5173"
+    depends_on:
+      - backend
+    networks:
+      - attendance_saas_network
+
+networks:
+  attendance_saas_network:
+    name: attendance_saas_network
+
+volumes:
+  attendance_saas_mysql_data:
+    name: attendance_saas_mysql_data

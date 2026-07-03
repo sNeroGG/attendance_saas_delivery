@@ -1,0 +1,33 @@
+# Variables de entorno y secretos
+.env
+
+# Archivos pesados y respaldos locales
+*.tar
+*.tar.gz
+*.sql
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+.pytest_cache/
+
+# Node / React
+node_modules/
+dist/
+build/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editores e IDEs
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
