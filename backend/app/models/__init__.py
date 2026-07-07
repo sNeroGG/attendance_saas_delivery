@@ -24,8 +24,6 @@ from app.models.core import (
     XAssignmentAnswer,
     XAssignmentValidation,
     XRule,
-    XFaceTemplate,
-    XBiometricLog,
     XAuditLog,
     XAutoCheckoutRule,
 )
@@ -56,8 +54,6 @@ __all__ = [
     "XAssignmentAnswer",
     "XAssignmentValidation",
     "XRule",
-    "XFaceTemplate",
-    "XBiometricLog",
     "XAuditLog",
     "XAutoCheckoutRule",
 ]

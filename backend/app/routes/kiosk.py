@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import HrEmployee, ResUser, XDevice, XFaceTemplate
+from app.models import HrEmployee, ResUser, XDevice
 from app.schemas.attendance import AttendanceEventOut, AttendanceEventTypeOut, KioskAttendanceEventCreate, KioskIdentifyPinRequest, KioskManagerOverrideRequest
 from app.security.auth import create_access_token, verify_secret
 from app.security.rate_limit import check_rate_limit, clear_rate_limit
@@ -43,9 +43,6 @@ def identify_pin(payload: KioskIdentifyPinRequest, db: Session = Depends(get_db)
             clear_rate_limit(f"pin:{payload.device_code}")
             access_token = create_access_token(user)
             
-            face_template = db.query(XFaceTemplate).filter_by(company_id=device.company_id, employee_id=employee.id, active=True).first()
-            has_face_template = face_template is not None
-            
             return {
                 "access_token": access_token,
                 "token_type": "bearer",
@@ -54,7 +51,6 @@ def identify_pin(payload: KioskIdentifyPinRequest, db: Session = Depends(get_db)
                     "name": employee.name, 
                     "employee_code": employee.employee_code, 
                     "branch_id": employee.branch_id,
-                    "has_face_template": has_face_template
                 },
                 "user": {"id": user.id, "name": user.name}
             }
@@ -102,7 +98,6 @@ def identify_manager_override(payload: KioskManagerOverrideRequest, db: Session 
             "name": employee.name,
             "employee_code": employee.employee_code,
             "branch_id": employee.branch_id,
-            "has_face_template": True  # Bypasses registration screen since it's an override
         },
         "user": {"id": employee_user.id, "name": employee_user.name}
     }

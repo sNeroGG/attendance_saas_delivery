@@ -6,7 +6,6 @@ import {
   CalendarX,
   ClipboardList,
   ListChecks,
-  ScanFace,
   BriefcaseBusiness,
   Building2,
   CheckSquare,
@@ -80,7 +79,7 @@ const resources: ResourceConfig[] = [
     title: 'Empleados',
     endpoint: '/employees',
     icon: <UsersRound />,
-    columns: ['id', 'face_image', 'name', 'employee_code', 'job_title', 'employee_type', 'is_active_for_work', 'active'],
+    columns: ['id', 'name', 'employee_code', 'job_title', 'employee_type', 'is_active_for_work', 'active'],
     fields: [
       { name: 'name', label: 'Nombre visible', required: true },
       { name: 'first_name', label: 'Nombres' },
@@ -105,7 +104,6 @@ const resources: ResourceConfig[] = [
       { name: 'create_user_profile', label: '¿Crear usuario de acceso automáticamente?', type: 'checkbox' },
       { name: 'user_login', label: 'Nombre de usuario (Login)', type: 'text' },
       { name: 'user_pin', label: 'PIN de Kiosko (Obligatorio si se crea usuario)', type: 'text' },
-      { name: 'face_image', label: 'Foto Face ID Base (Guardada)', type: 'image_preview' },
     ],
   },
   {
@@ -587,47 +585,9 @@ function KioskScreen() {
   const [showConfig, setShowConfig] = useState(false);
   const [tempDeviceCode, setTempDeviceCode] = useState(deviceCode);
 
-  const [loginMethod, setLoginMethod] = useState<'face' | 'pin' | 'manager_override'>('face');
-  const [authMethodUsed, setAuthMethodUsed] = useState<'pin' | 'face_id'>('pin');
-  const [cameraActive, setCameraActive] = useState(true);
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [regStep, setRegStep] = useState(0);
-  const [regImages, setRegImages] = useState<string[]>([]);
-  const [mockFace, setMockFace] = useState('demo-face-admin');
-  const [employeeNeedsFaceRegistration, setEmployeeNeedsFaceRegistration] = useState(false);
-
+  const [loginMethod, setLoginMethod] = useState<'pin' | 'manager_override'>('pin');
   const [managerPin, setManagerPin] = useState('');
   const [employeePin, setEmployeePin] = useState('');
-
-  useEffect(() => {
-    const shouldBeActive = (loginMethod === 'face' && !employee && cameraActive) || (employee && employeeNeedsFaceRegistration && cameraActive);
-    if (shouldBeActive) {
-      navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } })
-        .then((s) => {
-          setStream(s);
-          const videoId = employee ? 'kiosk-register-webcam' : 'kiosk-webcam';
-          const videoElement = document.getElementById(videoId) as HTMLVideoElement;
-          if (videoElement) {
-            videoElement.srcObject = s;
-          }
-        })
-        .catch((err) => {
-          console.error("No se pudo iniciar la camara:", err);
-          setError("No se pudo acceder a la cámara. Usando fallback de prueba.");
-          setCameraActive(false);
-        });
-    } else {
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-        setStream(null);
-      }
-    }
-    return () => {
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-      }
-    };
-  }, [loginMethod, employee, employeeNeedsFaceRegistration, cameraActive]);
 
   async function loadEvents(employeeId: number) {
     const data = await api.request<Record<string, unknown>[]>(`/kiosk/employees/${employeeId}/available-events?device_code=${encodeURIComponent(deviceCode)}`);
@@ -645,90 +605,24 @@ function KioskScreen() {
     setMessage('');
     try {
       await api.request(`/kiosk/${encodeURIComponent(deviceCode)}/config`);
-      const data = await api.request<{ employee: Record<string, unknown> & { has_face_template?: boolean }; access_token?: string }>('/kiosk/identify-pin', {
+      const data = await api.request<{ employee: Record<string, unknown>; access_token?: string }>('/kiosk/identify-pin', {
         method: 'POST',
         body: JSON.stringify({ device_code: deviceCode, pin }),
       });
       
       const emp = data.employee;
-      if (emp.has_face_template) {
-        api.clearToken();
-        throw new Error("Ya tienes un rostro registrado. Debes iniciar sesión con Face ID.");
-      }
-      
       if (data.access_token) {
         api.setToken(data.access_token);
       }
       setEmployee(emp);
-      setAuthMethodUsed('pin');
-      setEmployeeNeedsFaceRegistration(true);
-      setCameraActive(true);
       setPin('');
+      await loadEvents(Number(emp.id));
+      await loadAssignments(Number(emp.id));
     } catch (err) {
       setEmployee(null);
       setEvents([]);
       setAssignments([]);
       setError(err instanceof Error ? err.message : 'No se pudo identificar');
-    }
-  }
-
-  async function identifyFace(customFace?: string) {
-    setError('');
-    setMessage('');
-    let base64Image = '';
-    
-    if (customFace) {
-      base64Image = customFace;
-    } else if (cameraActive && stream) {
-      const videoElement = document.getElementById('kiosk-webcam') as HTMLVideoElement;
-      if (videoElement) {
-        const canvas = document.createElement('canvas');
-        canvas.width = videoElement.videoWidth || 320;
-        canvas.height = videoElement.videoHeight || 240;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-          base64Image = canvas.toDataURL('image/jpeg');
-        }
-      }
-    }
-    
-    if (!base64Image) {
-      base64Image = mockFace;
-    }
-    
-    try {
-      await api.request(`/kiosk/${encodeURIComponent(deviceCode)}/config`);
-      const data = await api.request<{ 
-        success: boolean; 
-        employee_id?: number; 
-        employee_name?: string; 
-        confidence_score?: number; 
-        access_token?: string; 
-        employee?: Record<string, unknown>;
-      }>('/kiosk/identify-face', {
-        method: 'POST',
-        body: JSON.stringify({ image_base64: base64Image, device_code: deviceCode }),
-      });
-      
-      if (!data.success) {
-        throw new Error(`Identificación fallida (Confianza: ${data.confidence_score?.toFixed(2) ?? 0})`);
-      }
-      
-      if (data.access_token && data.employee) {
-        api.setToken(data.access_token);
-        setEmployee(data.employee);
-        setAuthMethodUsed('face_id');
-        setEmployeeNeedsFaceRegistration(false);
-        await loadEvents(Number(data.employee.id));
-        await loadAssignments(Number(data.employee.id));
-        setMessage(`Identificado con éxito (Confianza: ${data.confidence_score?.toFixed(2) ?? 0})`);
-        setCameraActive(false);
-      } else {
-        throw new Error("No se pudo obtener el token de acceso para el empleado identificado.");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo identificar por rostro');
     }
   }
 
@@ -747,88 +641,16 @@ function KioskScreen() {
         api.setToken(data.access_token);
       }
       setEmployee(data.employee);
-      setAuthMethodUsed('pin');
-      setEmployeeNeedsFaceRegistration(false);
       await loadEvents(Number(data.employee.id));
       await loadAssignments(Number(data.employee.id));
       setManagerPin('');
       setEmployeePin('');
-      setCameraActive(false);
       setMessage("Inicio de sesión autorizado por Gerente.");
     } catch (err) {
       setEmployee(null);
       setEvents([]);
       setAssignments([]);
       setError(err instanceof Error ? err.message : 'No se pudo autorizar');
-    }
-  }
-
-  async function registerEmployeeFace(customFace?: string) {
-    if (!employee) return;
-    setError('');
-    setMessage('');
-    
-    if (customFace) {
-      try {
-        await api.request(`/employees/${employee.id}/register-face`, {
-          method: 'POST',
-          body: JSON.stringify({ images: [customFace, customFace, customFace], device_code: deviceCode }),
-        });
-        await loadEvents(Number(employee.id));
-        await loadAssignments(Number(employee.id));
-        setEmployeeNeedsFaceRegistration(false);
-        setMessage('Rostro de prueba registrado y sesión iniciada.');
-        setCameraActive(false);
-        setRegStep(0);
-        setRegImages([]);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'No se pudo registrar');
-      }
-      return;
-    }
-
-    let base64Image = '';
-    if (cameraActive && stream) {
-      const videoElement = document.getElementById('kiosk-register-webcam') as HTMLVideoElement;
-      if (videoElement) {
-        const canvas = document.createElement('canvas');
-        canvas.width = 320;
-        canvas.height = 320;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-          base64Image = canvas.toDataURL('image/jpeg', 0.75);
-        }
-      }
-    }
-
-    if (!base64Image) {
-      setError("No se pudo capturar la imagen. Enciende la cámara.");
-      return;
-    }
-
-    if (regStep < 2) {
-      setRegImages([...regImages, base64Image]);
-      setRegStep(regStep + 1);
-      setMessage(`Paso ${regStep === 0 ? "Frente" : "Izquierda"} capturado con éxito.`);
-    } else {
-      const allImages = [...regImages, base64Image];
-      try {
-        await api.request(`/employees/${employee.id}/register-face`, {
-          method: 'POST',
-          body: JSON.stringify({ images: allImages, device_code: deviceCode }),
-        });
-        
-        await loadEvents(Number(employee.id));
-        await loadAssignments(Number(employee.id));
-        setEmployeeNeedsFaceRegistration(false);
-        setMessage('Registro multi-ángulo completado. ¡Sesión iniciada con éxito!');
-        setCameraActive(false);
-        setRegStep(0);
-        setRegImages([]);
-      } catch (err: any) {
-        setError(err.message || 'No se pudo completar el registro facial');
-      }
     }
   }
 
@@ -842,10 +664,7 @@ function KioskScreen() {
     setPin('');
     setManagerPin('');
     setEmployeePin('');
-    setAuthMethodUsed('pin');
-    setEmployeeNeedsFaceRegistration(false);
-    setLoginMethod('face');
-    setCameraActive(true);
+    setLoginMethod('pin');
   }
 
   async function register(eventTypeId: number) {
@@ -953,145 +772,13 @@ function KioskScreen() {
             </div>
           )}
 
-          {loginMethod === 'face' && (
-            <div style={{ display: 'grid', gap: '16px', marginTop: '0' }}>
-              {error && <div className="error" style={{ fontSize: '13px', margin: '0' }}>{error}</div>}
-              {message && <div className="badge" style={{ margin: '0', display: 'flex', justifyContent: 'center', padding: '6px' }}>{message}</div>}
-              
-              <div style={{ textAlign: 'center', display: 'grid', gap: '10px' }}>
-                <span style={{ fontSize: '14px', color: '#475569', fontWeight: 'bold' }}>Reconocimiento Facial</span>
-                
-                <div style={{ 
-                  width: '320px', 
-                  height: '320px', 
-                  margin: '0 auto',
-                  background: '#0f172a', 
-                  borderRadius: '24px', 
-                  overflow: 'hidden', 
-                  position: 'relative',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  border: '3px solid #2f7dd1',
-                  boxShadow: '0 8px 32px rgba(47, 125, 209, 0.25)'
-                }}>
-                  {cameraActive ? (
-                    <video 
-                      id="kiosk-webcam" 
-                      autoPlay 
-                      playsInline 
-                      muted 
-                      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    />
-                  ) : (
-                    <div style={{ color: '#94a3b8', fontSize: '14px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                      <ScanFace size={48} style={{ color: '#64748b' }} />
-                      <span>Cámara desactivada</span>
-                    </div>
-                  )}
-                  
-                  {cameraActive && (
-                    <>
-                      {/* Línea de escaneo */}
-                      <div style={{
-                        position: 'absolute',
-                        top: '0',
-                        left: '0',
-                        width: '100%',
-                        height: '2px',
-                        background: 'rgba(47, 125, 209, 0.8)',
-                        boxShadow: '0 0 8px 2px #2f7dd1',
-                        animation: 'scan-line 3s linear infinite'
-                      }} />
-                      
-                      {/* Retícula de sensor circular */}
-                      <div style={{
-                        position: 'absolute',
-                        width: '180px',
-                        height: '180px',
-                        border: '2px dashed #2f7dd1',
-                        borderRadius: '50%',
-                        animation: 'pulse-ring 2.5s infinite ease-in-out',
-                        pointerEvents: 'none'
-                      }} />
-
-                      {/* Esquinas futuristas */}
-                      <div style={{ position: 'absolute', top: '20px', left: '20px', width: '20px', height: '20px', borderLeft: '3px solid #2f7dd1', borderTop: '3px solid #2f7dd1' }} />
-                      <div style={{ position: 'absolute', top: '20px', right: '20px', width: '20px', height: '20px', borderRight: '3px solid #2f7dd1', borderTop: '3px solid #2f7dd1' }} />
-                      <div style={{ position: 'absolute', bottom: '20px', left: '20px', width: '20px', height: '20px', borderLeft: '3px solid #2f7dd1', borderBottom: '3px solid #2f7dd1' }} />
-                      <div style={{ position: 'absolute', bottom: '20px', right: '20px', width: '20px', height: '20px', borderRight: '3px solid #2f7dd1', borderBottom: '3px solid #2f7dd1' }} />
-
-                    </>
-                  )}
-                </div>
-                
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                  <button 
-                    type="button" 
-                    className="ghost" 
-                    onClick={() => setCameraActive(!cameraActive)}
-                    style={{ minHeight: '38px', borderRadius: '8px' }}
-                  >
-                    {cameraActive ? 'Apagar' : 'Encender'}
-                  </button>
-                  <button 
-                    type="button" 
-                    className="primary" 
-                    onClick={() => identifyFace()}
-                    style={{ minHeight: '38px', borderRadius: '8px', flex: '1', fontWeight: 'bold' }}
-                  >
-                    <ScanFace size={18} /> Iniciar con Face ID
-                  </button>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
-                <button 
-                  type="button" 
-                  className="ghost" 
-                  onClick={() => {
-                    setLoginMethod('pin');
-                    setCameraActive(false);
-                  }}
-                  style={{ width: '100%', minHeight: '40px', borderRadius: '10px', fontSize: '13px', fontWeight: 'bold' }}
-                >
-                  Primera vez del empleado (Ingreso por PIN)
-                </button>
-                <button 
-                  type="button" 
-                  className="ghost" 
-                  onClick={() => {
-                    setLoginMethod('manager_override');
-                    setCameraActive(false);
-                  }}
-                  style={{ width: '100%', minHeight: '40px', borderRadius: '10px', fontSize: '13px', fontWeight: 'bold' }}
-                >
-                  Autorización Gerente (Login manual)
-                </button>
-              </div>
-
-              <style>{`
-                @keyframes scan-line {
-                  0% { top: 0%; }
-                  50% { top: 100%; }
-                  100% { top: 0%; }
-                }
-                @keyframes pulse-ring {
-                  0% { transform: scale(0.96); opacity: 0.4; }
-                  50% { transform: scale(1.04); opacity: 0.8; }
-                  100% { transform: scale(0.96); opacity: 0.4; }
-                }
-              `}</style>
-            </div>
-          )}
-
           {loginMethod === 'pin' && (
             <form className="login-form" onSubmit={identify} style={{ marginTop: '0', display: 'grid', gap: '16px' }}>
               {error && <div className="error" style={{ fontSize: '13px', margin: '0' }}>{error}</div>}
               {message && <div className="badge" style={{ margin: '0', display: 'flex', justifyContent: 'center', padding: '6px' }}>{message}</div>}
               
               <label className="field" style={{ textAlign: 'center', gap: '8px', display: 'grid' }}>
-                <span style={{ fontSize: '14px', color: '#475569', fontWeight: 'bold' }}>Primera Vez - Ingresa tu PIN</span>
+                <span style={{ fontSize: '14px', color: '#475569', fontWeight: 'bold' }}>Ingresa tu PIN</span>
                 <input 
                   type="password" 
                   inputMode="numeric" 
@@ -1123,13 +810,10 @@ function KioskScreen() {
               <button 
                 type="button" 
                 className="ghost" 
-                onClick={() => {
-                  setLoginMethod('face');
-                  setCameraActive(true);
-                }}
+                onClick={() => setLoginMethod('manager_override')}
                 style={{ width: '100%', minHeight: '44px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 'bold' }}
               >
-                Volver a Iniciar con Face ID
+                Autorización de Gerente
               </button>
             </form>
           )}
@@ -1174,13 +858,10 @@ function KioskScreen() {
               <button 
                 type="button" 
                 className="ghost" 
-                onClick={() => {
-                  setLoginMethod('face');
-                  setCameraActive(true);
-                }}
+                onClick={() => setLoginMethod('pin')}
                 style={{ width: '100%', minHeight: '44px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 'bold' }}
               >
-                Volver a Iniciar con Face ID
+                Volver a Ingresar PIN de Empleado
               </button>
             </form>
           )}
@@ -1189,132 +870,7 @@ function KioskScreen() {
     );
   }
 
-  if (employee && employeeNeedsFaceRegistration) {
-    return (
-      <div style={{ display: 'grid', gap: '16px', width: '100%', padding: '4px' }}>
-        <div className="panel" style={{ background: 'linear-gradient(135deg, #16202a, #233243)', color: 'white', border: '0', borderRadius: '16px', padding: '20px', boxShadow: '0 8px 24px rgba(0,0,0,0.12)' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <span style={{ color: '#94a3b8', fontSize: '12px', textTransform: 'uppercase', fontWeight: 'bold' }}>Primer Ingreso</span>
-              <h2 style={{ fontSize: '20px', margin: '4px 0 0 0', fontWeight: '800' }}>{String(employee.name)}</h2>
-              <small style={{ color: '#f59e0b', marginTop: '4px', display: 'block', fontWeight: '600' }}>Registro de Rostro Obligatorio</small>
-            </div>
-            <button type="button" onClick={logoutEmployee} style={{ background: 'rgba(255,255,255,0.15)', color: 'white', border: '0', borderRadius: '12px', padding: '8px 16px', fontSize: '13px', fontWeight: 'bold' }}>
-              Cancelar
-            </button>
-          </div>
-        </div>
-
-        {error && <div className="error" style={{ margin: '0', fontSize: '13px' }}>{error}</div>}
-        {message && <div className="badge" style={{ margin: '0', background: '#ecfdf5', color: '#047857', padding: '10px 14px', borderRadius: '10px' }}>{message}</div>}
-
-        <div className="panel" style={{ borderRadius: '16px', padding: '20px', background: 'white', border: '1px solid #e2e8f0', display: 'grid', gap: '12px' }}>
-          <div style={{ textAlign: 'center', display: 'grid', gap: '8px' }}>
-            <span style={{ fontSize: '15px', color: '#10b981', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Paso {regStep + 1} de 3: {regStep === 0 ? 'MIRA AL FRENTE' : regStep === 1 ? 'GIRO A LA IZQUIERDA' : 'GIRO A LA DERECHA'}
-            </span>
-            <span style={{ fontSize: '13px', color: '#64748b', minHeight: '38px', display: 'block' }}>
-              {regStep === 0 
-                ? 'Mantén una posición centrada y mira directamente al centro de la cámara.' 
-                : regStep === 1 
-                ? 'Gira levemente la cabeza hacia tu izquierda para capturar tu perfil.' 
-                : 'Gira levemente la cabeza hacia tu derecha para capturar tu perfil.'}
-            </span>
-            
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', margin: '4px 0 10px 0' }}>
-              <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: regStep >= 0 ? '#10b981' : '#cbd5e1', transition: 'background 0.3s' }} />
-              <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: regStep >= 1 ? '#10b981' : '#cbd5e1', transition: 'background 0.3s' }} />
-              <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: regStep >= 2 ? '#10b981' : '#cbd5e1', transition: 'background 0.3s' }} />
-            </div>
-            
-            <div style={{ 
-              width: '320px', 
-              height: '320px', 
-              margin: '0 auto',
-              background: '#0f172a', 
-              borderRadius: '24px', 
-              overflow: 'hidden', 
-              position: 'relative',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              border: '3px solid #10b981',
-              boxShadow: '0 8px 32px rgba(16, 185, 129, 0.25)'
-            }}>
-              {cameraActive ? (
-                <video 
-                  id="kiosk-register-webcam" 
-                  autoPlay 
-                  playsInline 
-                  muted 
-                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                />
-              ) : (
-                <div style={{ color: '#94a3b8', fontSize: '14px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                  <ScanFace size={48} style={{ color: '#10b981' }} />
-                  <span>Cámara desactivada</span>
-                </div>
-              )}
-
-              {cameraActive && (
-                <>
-                  {/* Línea de escaneo */}
-                  <div style={{
-                    position: 'absolute',
-                    top: '0',
-                    left: '0',
-                    width: '100%',
-                    height: '2px',
-                    background: 'rgba(16, 185, 129, 0.8)',
-                    boxShadow: '0 0 8px 2px #10b981',
-                    animation: 'scan-line 3s linear infinite'
-                  }} />
-                  
-                  {/* Retícula de sensor circular */}
-                  <div style={{
-                    position: 'absolute',
-                    width: '180px',
-                    height: '180px',
-                    border: '2px dashed #10b981',
-                    borderRadius: '50%',
-                    animation: 'pulse-ring 2.5s infinite ease-in-out',
-                    pointerEvents: 'none'
-                  }} />
-
-                  {/* Esquinas futuristas */}
-                  <div style={{ position: 'absolute', top: '20px', left: '20px', width: '20px', height: '20px', borderLeft: '3px solid #10b981', borderTop: '3px solid #10b981' }} />
-                  <div style={{ position: 'absolute', top: '20px', right: '20px', width: '20px', height: '20px', borderRight: '3px solid #10b981', borderTop: '3px solid #10b981' }} />
-                  <div style={{ position: 'absolute', bottom: '20px', left: '20px', width: '20px', height: '20px', borderLeft: '3px solid #10b981', borderBottom: '3px solid #10b981' }} />
-                  <div style={{ position: 'absolute', bottom: '20px', right: '20px', width: '20px', height: '20px', borderRight: '3px solid #10b981', borderBottom: '3px solid #10b981' }} />
-
-                </>
-              )}
-            </div>
-            
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', marginTop: '10px' }}>
-              <button 
-                type="button" 
-                className="ghost" 
-                onClick={() => setCameraActive(!cameraActive)}
-                style={{ minHeight: '38px', borderRadius: '8px' }}
-              >
-                {cameraActive ? 'Apagar Cámara' : 'Encender Cámara'}
-              </button>
-              <button 
-                type="button" 
-                className="primary" 
-                onClick={() => registerEmployeeFace()}
-                disabled={!cameraActive}
-                style={{ minHeight: '38px', borderRadius: '8px', flex: '1', fontWeight: 'bold', background: '#10b981', borderColor: '#10b981' }}
-              >
-                {regStep === 0 ? 'Capturar Frente' : regStep === 1 ? 'Capturar Izquierda' : 'Finalizar Registro Facial'}
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // (Registro biométrico multi-ángulo eliminado)
 
   return (
     <div style={{ display: 'grid', gap: '16px', width: '100%', padding: '4px' }}>
@@ -1496,7 +1052,6 @@ function ReportsScreen() {
     { key: 'hours', title: 'Horas', endpoint: '/reports/hours' },
     { key: 'assignments', title: 'Asignaciones', endpoint: '/reports/assignments' },
     { key: 'attendance-exceptions', title: 'Excepciones', endpoint: '/reports/attendance-exceptions' },
-    { key: 'biometric', title: 'Biometria', endpoint: '/reports/biometric' },
     { key: 'audit', title: 'Auditoria', endpoint: '/reports/audit' },
   ];
   const [active, setActive] = useState(reports[0]);
@@ -1526,225 +1081,7 @@ function ReportsScreen() {
   );
 }
 
-function FaceIdScreen() {
-  const [employeeId, setEmployeeId] = useState('1');
-  const [imageBase64, setImageBase64] = useState('');
-  const [deviceCode, setDeviceCode] = useState('KIOSK-DEMO');
-  const [result, setResult] = useState('');
-  const [error, setError] = useState('');
-  const [cameraActive, setCameraActive] = useState(false);
-  const [stream, setStream] = useState<MediaStream | null>(null);
-
-  useEffect(() => {
-    if (cameraActive) {
-      navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } })
-        .then((s) => {
-          setStream(s);
-          const videoElement = document.getElementById('admin-webcam') as HTMLVideoElement;
-          if (videoElement) {
-            videoElement.srcObject = s;
-          }
-        })
-        .catch((err) => {
-          console.error("No se pudo iniciar la camara:", err);
-          setError("No se pudo acceder a la cámara. Usando fallback de prueba.");
-          setCameraActive(false);
-        });
-    } else {
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-        setStream(null);
-      }
-    }
-    return () => {
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-      }
-    };
-  }, [cameraActive]);
-
-  async function capturePhoto() {
-    if (cameraActive && stream) {
-      const videoElement = document.getElementById('admin-webcam') as HTMLVideoElement;
-      if (videoElement) {
-        const canvas = document.createElement('canvas');
-        canvas.width = videoElement.videoWidth || 320;
-        canvas.height = videoElement.videoHeight || 240;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-          const base64 = canvas.toDataURL('image/jpeg');
-          setImageBase64(base64);
-          setResult('Foto capturada con éxito de la cámara.');
-        }
-      }
-    }
-  }
-
-  async function registerFace(event: FormEvent) {
-    event.preventDefault();
-    setError('');
-    setResult('');
-    try {
-      const data = await api.request<Record<string, unknown>>(`/employees/${employeeId}/register-face`, { method: 'POST', body: JSON.stringify({ image_base64: imageBase64, device_code: deviceCode }) });
-      setResult(`Face template #${data.id} registrado para el empleado #${employeeId}`);
-    } catch (err) { setError(err instanceof Error ? err.message : 'No se pudo registrar'); }
-  }
-
-  async function identifyFace() {
-    setError('');
-    setResult('');
-    try {
-      const data = await api.request<Record<string, unknown>>('/kiosk/identify-face', { method: 'POST', body: JSON.stringify({ image_base64: imageBase64, device_code: deviceCode }) });
-      setResult(`Resultado Identificación: ${JSON.stringify(data)}`);
-    } catch (err) { setError(err instanceof Error ? err.message : 'No se pudo identificar'); }
-  }
-
-  async function processAutoCheckout() {
-    setError('');
-    try {
-      const data = await api.request<Record<string, unknown>>('/jobs/process-auto-checkout', { method: 'POST', body: JSON.stringify({}) });
-      setResult(JSON.stringify(data));
-    } catch (err) { setError(err instanceof Error ? err.message : 'No se pudo procesar'); }
-  }
-
-  return (
-    <>
-      <Header title="Face ID" subtitle="Administración y Calibración Biométrica" />
-      {error && <div className="error">{error}</div>}
-      {result && <div className="badge" style={{ marginBottom: 12 }}>{result}</div>}
-      
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-        <form className="panel" onSubmit={registerFace}>
-          <div className="panel-header"><strong>Registro Face ID</strong><button className="primary" type="submit" disabled={!imageBase64}><ScanFace size={16} /> Registrar Plantilla</button></div>
-          <div className="grid">
-            <label className="field"><span>Empleado ID</span><input value={employeeId} onChange={(event) => setEmployeeId(event.target.value)} /></label>
-            <label className="field"><span>Dispositivo</span><input value={deviceCode} onChange={(event) => setDeviceCode(event.target.value)} /></label>
-            <div className="field">
-              <span>Vista previa de captura</span>
-              <div style={{ 
-                padding: '12px', 
-                background: '#f8fafc', 
-                borderRadius: '8px', 
-                border: '1px solid #cbd5e1', 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center', 
-                minHeight: '100px' 
-              }}>
-                {imageBase64 && imageBase64.startsWith('data:image') ? (
-                  <img src={imageBase64} alt="Captura" style={{ maxWidth: '100%', maxHeight: '100px', borderRadius: '6px' }} />
-                ) : (
-                  <span style={{ color: '#64748b', fontSize: '12px' }}>Toma una foto para registrar</span>
-                )}
-              </div>
-            </div>
-          </div>
-        </form>
-
-        <div className="panel" style={{ display: 'flex', flexDirection: 'column' }}>
-          <div className="panel-header"><strong>Capturar Foto</strong></div>
-          <div style={{ padding: '14px', flex: '1', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ 
-              width: '280px', 
-              height: '280px', 
-              margin: '0 auto',
-              background: '#0f172a', 
-              borderRadius: '20px', 
-              overflow: 'hidden', 
-              position: 'relative',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              border: '3px solid #2f7dd1',
-              boxShadow: '0 6px 24px rgba(47, 125, 209, 0.2)'
-            }}>
-              {cameraActive ? (
-                <video 
-                  id="admin-webcam" 
-                  autoPlay 
-                  playsInline 
-                  muted 
-                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                />
-              ) : (
-                <span style={{ color: '#94a3b8', fontSize: '13px' }}>Cámara apagada</span>
-              )}
-
-              {cameraActive && (
-                <>
-                  {/* Línea de escaneo */}
-                  <div style={{
-                    position: 'absolute',
-                    top: '0',
-                    left: '0',
-                    width: '100%',
-                    height: '2px',
-                    background: 'rgba(47, 125, 209, 0.8)',
-                    boxShadow: '0 0 8px 2px #2f7dd1',
-                    animation: 'scan-line 3s linear infinite'
-                  }} />
-                  
-                  {/* Retícula de sensor circular */}
-                  <div style={{
-                    position: 'absolute',
-                    width: '150px',
-                    height: '150px',
-                    border: '2px dashed #2f7dd1',
-                    borderRadius: '50%',
-                    animation: 'pulse-ring 2.5s infinite ease-in-out',
-                    pointerEvents: 'none'
-                  }} />
-
-                  {/* Esquinas futuristas */}
-                  <div style={{ position: 'absolute', top: '15px', left: '15px', width: '15px', height: '15px', borderLeft: '3px solid #2f7dd1', borderTop: '3px solid #2f7dd1' }} />
-                  <div style={{ position: 'absolute', top: '15px', right: '15px', width: '15px', height: '15px', borderRight: '3px solid #2f7dd1', borderTop: '3px solid #2f7dd1' }} />
-                  <div style={{ position: 'absolute', bottom: '15px', left: '15px', width: '15px', height: '15px', borderLeft: '3px solid #2f7dd1', borderBottom: '3px solid #2f7dd1' }} />
-                  <div style={{ position: 'absolute', bottom: '15px', right: '15px', width: '15px', height: '15px', borderRight: '3px solid #2f7dd1', borderBottom: '3px solid #2f7dd1' }} />
-
-                </>
-              )}
-            </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button 
-                type="button" 
-                className="ghost" 
-                onClick={() => setCameraActive(!cameraActive)}
-                style={{ flex: '1' }}
-              >
-                {cameraActive ? 'Apagar Cámara' : 'Encender Cámara'}
-              </button>
-              <button 
-                type="button" 
-                className="primary" 
-                onClick={capturePhoto}
-                disabled={!cameraActive}
-                style={{ flex: '1' }}
-              >
-                Tomar Foto
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </>
-  );
-}
-
 function FormGrid({ fields, payload, setPayload }: { fields: Field[]; payload: Record<string, unknown>; setPayload: (value: Record<string, unknown>) => void }) {
-  const handleDeleteFace = async () => {
-    if (!payload.id) return;
-    try {
-      if (window.confirm("¿Seguro que deseas eliminar la foto base de Face ID de este empleado? El empleado tendrá que volver a registrarse con su PIN en el Kiosko.")) {
-        await api.request(`/employees/${payload.id}/face`, { method: 'DELETE' });
-        setPayload({ ...payload, face_image: null });
-        alert("Foto eliminada con éxito.");
-      }
-    } catch (err) {
-      alert("No se pudo eliminar la foto.");
-    }
-  };
-
   return (
     <div className="grid">
       {fields.map((field) => (
@@ -1754,21 +1091,6 @@ function FormGrid({ fields, payload, setPayload }: { fields: Field[]; payload: R
             <textarea value={String(payload[field.name] ?? '')} onChange={(event) => setPayload({ ...payload, [field.name]: event.target.value })} />
           ) : field.type === 'checkbox' ? (
             <input type="checkbox" checked={Boolean(payload[field.name])} onChange={(event) => setPayload({ ...payload, [field.name]: event.target.checked })} />
-          ) : field.type === 'image_preview' ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#f8fafc', padding: '10px', borderRadius: '10px', border: '1px solid #e2e8f0', minHeight: '60px', width: '100%' }}>
-              {payload[field.name] ? (
-                <>
-                  <img src={String(payload[field.name])} alt="Face ID Base" style={{ width: '60px', height: '60px', borderRadius: '50%', objectFit: 'cover', border: '2px solid #2f7dd1' }} />
-                  <button type="button" className="ghost" onClick={handleDeleteFace} style={{ color: '#ef4444', borderColor: '#fee2e2', background: '#fef2f2', padding: '4px 10px', fontSize: '12px', minHeight: '30px' }}>
-                    Eliminar Foto
-                  </button>
-                </>
-              ) : (
-                <span style={{ color: '#64748b', fontSize: '12px', fontStyle: 'italic' }}>
-                  Sin foto Face ID (se le pedirá PIN para registrarla en Kiosko)
-                </span>
-              )}
-            </div>
           ) : (
             <input type={field.type ?? 'text'} required={field.required} value={String(payload[field.name] ?? '')} onChange={(event) => setPayload({ ...payload, [field.name]: event.target.value })} />
           )}
@@ -1781,9 +1103,6 @@ function FormGrid({ fields, payload, setPayload }: { fields: Field[]; payload: R
 function renderValue(value: unknown) {
   if (typeof value === 'boolean') return value ? <span className="badge">Si</span> : 'No';
   if (value === null || value === undefined || value === '') return '-';
-  if (typeof value === 'string' && value.startsWith('data:image/')) {
-    return <img src={value} alt="Foto Face ID" style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '50%', border: '2px solid #2f7dd1' }} />;
-  }
   return String(value);
 }
 
@@ -1830,7 +1149,6 @@ export function App() {
           {resources.map((item) => <button key={item.key} className={screen === item.key ? 'active' : ''} onClick={() => setScreen(item.key)}>{item.icon} {item.title}</button>)}
           <button className={screen === 'permissions' ? 'active' : ''} onClick={() => setScreen('permissions')}><CheckSquare /> Permisos</button>
           <button className={screen === 'assignment-questions' ? 'active' : ''} onClick={() => setScreen('assignment-questions')}><ListChecks /> Preguntas</button>
-          <button className={screen === 'face-id' ? 'active' : ''} onClick={() => setScreen('face-id')}><ScanFace /> Face ID</button>
           <button className={screen === 'reports' ? 'active' : ''} onClick={() => setScreen('reports')}><ClipboardList /> Reportes</button>
           {tableScreens.map((item) => <button key={item.key} className={screen === item.key ? 'active' : ''} onClick={() => setScreen(item.key)}><ClipboardList /> {item.title}</button>)}
           <button onClick={() => window.open('/', '_blank')}><KeyRound /> Kiosko PIN</button>
@@ -1845,7 +1163,6 @@ export function App() {
         {screen === 'company' && <CompanyScreen />}
         {screen === 'permissions' && <PermissionScreen />}
         {screen === 'assignment-questions' && <AssignmentQuestionsScreen />}
-        {screen === 'face-id' && <FaceIdScreen />}
         {screen === 'reports' && <ReportsScreen />}
         {resource && <ResourceScreen config={resource} />}
         {tableScreen && <TableScreen config={tableScreen} />}

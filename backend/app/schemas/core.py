@@ -160,7 +160,6 @@ class EmployeeIn(BaseModel):
 class EmployeeOut(EmployeeIn, ORMModel):
     id: int
     company_id: int
-    face_image: str | None = None
 
 
 class ChangeStatusRequest(BaseModel):
