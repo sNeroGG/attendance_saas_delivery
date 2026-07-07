@@ -36,3 +36,20 @@ app.include_router(phase4.router, prefix="/api")
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "service": "attendance_saas_backend"}
+
+
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
+
+@app.exception_handler(IntegrityError)
+def integrity_error_handler(request, exc: IntegrityError):
+    error_msg = str(exc.orig) if exc.orig else str(exc)
+    if "Duplicate entry" in error_msg:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": "El nombre de usuario (login) ya está registrado en el sistema. Elija otro nombre único."}
+        )
+    return JSONResponse(
+        status_code=400,
+        content={"detail": "Error de integridad de datos."}
+    )

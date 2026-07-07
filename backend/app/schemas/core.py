@@ -58,7 +58,7 @@ class UserCreate(BaseModel):
     name: str
     login: str
     email: str | None = None
-    password: str = Field(min_length=6)
+    password: str | None = Field(default=None, min_length=6)
     pin: str | None = Field(default=None, min_length=4, max_length=12)
     employee_id: int | None = None
     is_superadmin: bool = False
@@ -152,11 +152,15 @@ class EmployeeIn(BaseModel):
     is_active_for_work: bool = True
     notes: str | None = None
     active: bool = True
+    create_user_profile: bool | None = False
+    user_login: str | None = None
+    user_pin: str | None = None
 
 
 class EmployeeOut(EmployeeIn, ORMModel):
     id: int
     company_id: int
+    face_image: str | None = None
 
 
 class ChangeStatusRequest(BaseModel):

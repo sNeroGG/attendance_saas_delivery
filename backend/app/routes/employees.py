@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import HrEmployee, ResUser, XEmployeeRole, XEmployeeStatusHistory
+from app.models import HrEmployee, ResUser, XEmployeeRole, XEmployeeStatusHistory, XFaceTemplate
 from app.routes.common import apply_values, company_query, get_company_record, to_dict
 from app.schemas.core import AssignRoleRequest, ChangeStatusRequest, EmployeeIn, EmployeeOut
 from app.security.auth import get_current_user
@@ -12,29 +12,74 @@ router = APIRouter(prefix="/employees", tags=["employees"])
 
 @router.get("", response_model=list[EmployeeOut])
 def list_employees(db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
-    return company_query(db, HrEmployee, user).order_by(HrEmployee.name).all()
+    employees = company_query(db, HrEmployee, user).order_by(HrEmployee.name).all()
+    for emp in employees:
+        template = db.query(XFaceTemplate).filter_by(company_id=user.company_id, employee_id=emp.id, active=True).first()
+        emp.face_image = template.face_encoding if template else None
+    return employees
 
 
 @router.post("", response_model=EmployeeOut)
 def create_employee(payload: EmployeeIn, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
-    record = HrEmployee(**payload.model_dump(), company_id=user.company_id, create_uid=user.id, write_uid=user.id)
+    data = payload.model_dump()
+    create_user_profile = data.pop("create_user_profile", False)
+    user_login = data.pop("user_login", None)
+    user_pin = data.pop("user_pin", None)
+
+    record = HrEmployee(**data, company_id=user.company_id, create_uid=user.id, write_uid=user.id)
     db.add(record)
+    db.flush()
+
+    if create_user_profile:
+        login_name = user_login or record.employee_code or f"user_{record.id}"
+        # Validar login único para evitar duplicados
+        existing_user = db.query(ResUser).filter_by(company_id=user.company_id, login=login_name).first()
+        if existing_user:
+            login_name = f"{login_name}_{record.id}"
+        
+        from app.security.auth import hash_secret
+        new_user = ResUser(
+            company_id=user.company_id,
+            employee_id=record.id,
+            name=record.name,
+            login=login_name,
+            email=record.work_email,
+            password_hash=hash_secret("default_dummy_password_123"),
+            pin_hash=hash_secret(user_pin) if user_pin else None,
+            create_uid=user.id,
+            write_uid=user.id,
+        )
+        db.add(new_user)
+        db.flush()
+        record.user_id = new_user.id
+
     db.commit()
     db.refresh(record)
+    template = db.query(XFaceTemplate).filter_by(company_id=user.company_id, employee_id=record.id, active=True).first()
+    record.face_image = template.face_encoding if template else None
     return record
 
 
 @router.get("/{record_id}", response_model=EmployeeOut)
 def get_employee(record_id: int, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
-    return get_company_record(db, HrEmployee, record_id, user)
+    emp = get_company_record(db, HrEmployee, record_id, user)
+    template = db.query(XFaceTemplate).filter_by(company_id=user.company_id, employee_id=emp.id, active=True).first()
+    emp.face_image = template.face_encoding if template else None
+    return emp
 
 
 @router.put("/{record_id}", response_model=EmployeeOut)
 def update_employee(record_id: int, payload: EmployeeIn, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
     record = get_company_record(db, HrEmployee, record_id, user)
-    apply_values(record, to_dict(payload), user.id)
+    data = payload.model_dump()
+    data.pop("create_user_profile", None)
+    data.pop("user_login", None)
+    data.pop("user_pin", None)
+    apply_values(record, data, user.id)
     db.commit()
     db.refresh(record)
+    template = db.query(XFaceTemplate).filter_by(company_id=user.company_id, employee_id=record.id, active=True).first()
+    record.face_image = template.face_encoding if template else None
     return record
 
 
@@ -65,5 +110,15 @@ def assign_role(record_id: int, payload: AssignRoleRequest, db: Session = Depend
     exists = db.query(XEmployeeRole).filter_by(employee_id=employee.id, role_id=payload.role_id).first()
     if not exists:
         db.add(XEmployeeRole(employee_id=employee.id, role_id=payload.role_id, create_uid=user.id))
+        db.commit()
+    return {"ok": True}
+
+
+@router.delete("/{record_id}/face")
+def delete_employee_face(record_id: int, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    employee = get_company_record(db, HrEmployee, record_id, user)
+    template = db.query(XFaceTemplate).filter_by(company_id=user.company_id, employee_id=employee.id, active=True).first()
+    if template:
+        template.active = False
         db.commit()
     return {"ok": True}

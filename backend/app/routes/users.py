@@ -25,7 +25,7 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db), user: ResUse
     record = ResUser(
         **values,
         company_id=user.company_id,
-        password_hash=hash_secret(payload.password),
+        password_hash=hash_secret(payload.password) if payload.password else hash_secret("default_dummy_password_123"),
         pin_hash=hash_secret(payload.pin) if payload.pin else None,
         create_uid=user.id,
         write_uid=user.id,

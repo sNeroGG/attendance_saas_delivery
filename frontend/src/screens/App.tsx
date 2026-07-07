@@ -18,6 +18,7 @@ import {
   MonitorSmartphone,
   RefreshCw,
   Save,
+  Settings,
   ShieldCheck,
   UserRound,
   UsersRound,
@@ -67,8 +68,8 @@ const resources: ResourceConfig[] = [
       { name: 'name', label: 'Nombre', required: true },
       { name: 'login', label: 'Login', required: true },
       { name: 'email', label: 'Email', type: 'email' },
-      { name: 'password', label: 'Password', type: 'password', required: true },
-      { name: 'pin', label: 'PIN', type: 'password' },
+      { name: 'password', label: 'Password (Opcional)', type: 'password' },
+      { name: 'pin', label: 'PIN (Obligatorio para Kiosko)', type: 'text' },
       { name: 'employee_id', label: 'Empleado ID', type: 'number' },
       { name: 'is_company_admin', label: 'Admin empresa', type: 'checkbox' },
       { name: 'active', label: 'Activo', type: 'checkbox' },
@@ -79,7 +80,7 @@ const resources: ResourceConfig[] = [
     title: 'Empleados',
     endpoint: '/employees',
     icon: <UsersRound />,
-    columns: ['id', 'name', 'employee_code', 'job_title', 'employee_type', 'is_active_for_work', 'active'],
+    columns: ['id', 'face_image', 'name', 'employee_code', 'job_title', 'employee_type', 'is_active_for_work', 'active'],
     fields: [
       { name: 'name', label: 'Nombre visible', required: true },
       { name: 'first_name', label: 'Nombres' },
@@ -101,6 +102,10 @@ const resources: ResourceConfig[] = [
       { name: 'is_active_for_work', label: 'Activo para trabajar', type: 'checkbox' },
       { name: 'notes', label: 'Notas', type: 'textarea' },
       { name: 'active', label: 'Activo', type: 'checkbox' },
+      { name: 'create_user_profile', label: '¿Crear usuario de acceso automáticamente?', type: 'checkbox' },
+      { name: 'user_login', label: 'Nombre de usuario (Login)', type: 'text' },
+      { name: 'user_pin', label: 'PIN de Kiosko (Obligatorio si se crea usuario)', type: 'text' },
+      { name: 'face_image', label: 'Foto Face ID Base (Guardada)', type: 'image_preview' },
     ],
   },
   {
@@ -586,6 +591,8 @@ function KioskScreen() {
   const [authMethodUsed, setAuthMethodUsed] = useState<'pin' | 'face_id'>('pin');
   const [cameraActive, setCameraActive] = useState(true);
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const [regStep, setRegStep] = useState(0);
+  const [regImages, setRegImages] = useState<string[]>([]);
   const [mockFace, setMockFace] = useState('demo-face-admin');
   const [employeeNeedsFaceRegistration, setEmployeeNeedsFaceRegistration] = useState(false);
 
@@ -760,41 +767,68 @@ function KioskScreen() {
     if (!employee) return;
     setError('');
     setMessage('');
-    let base64Image = '';
     
     if (customFace) {
-      base64Image = customFace;
-    } else if (cameraActive && stream) {
+      try {
+        await api.request(`/employees/${employee.id}/register-face`, {
+          method: 'POST',
+          body: JSON.stringify({ images: [customFace, customFace, customFace], device_code: deviceCode }),
+        });
+        await loadEvents(Number(employee.id));
+        await loadAssignments(Number(employee.id));
+        setEmployeeNeedsFaceRegistration(false);
+        setMessage('Rostro de prueba registrado y sesión iniciada.');
+        setCameraActive(false);
+        setRegStep(0);
+        setRegImages([]);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'No se pudo registrar');
+      }
+      return;
+    }
+
+    let base64Image = '';
+    if (cameraActive && stream) {
       const videoElement = document.getElementById('kiosk-register-webcam') as HTMLVideoElement;
       if (videoElement) {
         const canvas = document.createElement('canvas');
-        canvas.width = videoElement.videoWidth || 320;
-        canvas.height = videoElement.videoHeight || 240;
+        canvas.width = 320;
+        canvas.height = 320;
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-          base64Image = canvas.toDataURL('image/jpeg');
+          base64Image = canvas.toDataURL('image/jpeg', 0.75);
         }
       }
     }
-    
+
     if (!base64Image) {
-      base64Image = mockFace;
+      setError("No se pudo capturar la imagen. Enciende la cámara.");
+      return;
     }
-    
-    try {
-      await api.request(`/employees/${employee.id}/register-face`, {
-        method: 'POST',
-        body: JSON.stringify({ image_base64: base64Image, device_code: deviceCode }),
-      });
-      
-      await loadEvents(Number(employee.id));
-      await loadAssignments(Number(employee.id));
-      setEmployeeNeedsFaceRegistration(false);
-      setMessage('Rostro registrado y sesión iniciada con éxito.');
-      setCameraActive(false);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo registrar el rostro');
+
+    if (regStep < 2) {
+      setRegImages([...regImages, base64Image]);
+      setRegStep(regStep + 1);
+      setMessage(`Paso ${regStep === 0 ? "Frente" : "Izquierda"} capturado con éxito.`);
+    } else {
+      const allImages = [...regImages, base64Image];
+      try {
+        await api.request(`/employees/${employee.id}/register-face`, {
+          method: 'POST',
+          body: JSON.stringify({ images: allImages, device_code: deviceCode }),
+        });
+        
+        await loadEvents(Number(employee.id));
+        await loadAssignments(Number(employee.id));
+        setEmployeeNeedsFaceRegistration(false);
+        setMessage('Registro multi-ángulo completado. ¡Sesión iniciada con éxito!');
+        setCameraActive(false);
+        setRegStep(0);
+        setRegImages([]);
+      } catch (err: any) {
+        setError(err.message || 'No se pudo completar el registro facial');
+      }
     }
   }
 
@@ -881,7 +915,7 @@ function KioskScreen() {
             }}
             title="Configurar dispositivo"
           >
-            ⚙️
+            <Settings size={18} />
           </button>
 
           <div className="brand" style={{ color: '#17202a', border: 0, padding: 0, justifyContent: 'center', marginBottom: '28px', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -928,16 +962,18 @@ function KioskScreen() {
                 <span style={{ fontSize: '14px', color: '#475569', fontWeight: 'bold' }}>Reconocimiento Facial</span>
                 
                 <div style={{ 
-                  width: '100%', 
-                  height: '240px', 
+                  width: '320px', 
+                  height: '320px', 
+                  margin: '0 auto',
                   background: '#0f172a', 
-                  borderRadius: '12px', 
+                  borderRadius: '24px', 
                   overflow: 'hidden', 
                   position: 'relative',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  border: '2px dashed #2f7dd1'
+                  border: '3px solid #2f7dd1',
+                  boxShadow: '0 8px 32px rgba(47, 125, 209, 0.25)'
                 }}>
                   {cameraActive ? (
                     <video 
@@ -955,16 +991,37 @@ function KioskScreen() {
                   )}
                   
                   {cameraActive && (
-                    <div style={{
-                      position: 'absolute',
-                      top: '0',
-                      left: '0',
-                      width: '100%',
-                      height: '2px',
-                      background: 'rgba(47, 125, 209, 0.8)',
-                      boxShadow: '0 0 8px 2px #2f7dd1',
-                      animation: 'scan-line 3s linear infinite'
-                    }} />
+                    <>
+                      {/* Línea de escaneo */}
+                      <div style={{
+                        position: 'absolute',
+                        top: '0',
+                        left: '0',
+                        width: '100%',
+                        height: '2px',
+                        background: 'rgba(47, 125, 209, 0.8)',
+                        boxShadow: '0 0 8px 2px #2f7dd1',
+                        animation: 'scan-line 3s linear infinite'
+                      }} />
+                      
+                      {/* Retícula de sensor circular */}
+                      <div style={{
+                        position: 'absolute',
+                        width: '180px',
+                        height: '180px',
+                        border: '2px dashed #2f7dd1',
+                        borderRadius: '50%',
+                        animation: 'pulse-ring 2.5s infinite ease-in-out',
+                        pointerEvents: 'none'
+                      }} />
+
+                      {/* Esquinas futuristas */}
+                      <div style={{ position: 'absolute', top: '20px', left: '20px', width: '20px', height: '20px', borderLeft: '3px solid #2f7dd1', borderTop: '3px solid #2f7dd1' }} />
+                      <div style={{ position: 'absolute', top: '20px', right: '20px', width: '20px', height: '20px', borderRight: '3px solid #2f7dd1', borderTop: '3px solid #2f7dd1' }} />
+                      <div style={{ position: 'absolute', bottom: '20px', left: '20px', width: '20px', height: '20px', borderLeft: '3px solid #2f7dd1', borderBottom: '3px solid #2f7dd1' }} />
+                      <div style={{ position: 'absolute', bottom: '20px', right: '20px', width: '20px', height: '20px', borderRight: '3px solid #2f7dd1', borderBottom: '3px solid #2f7dd1' }} />
+
+                    </>
                   )}
                 </div>
                 
@@ -988,27 +1045,6 @@ function KioskScreen() {
                 </div>
               </div>
 
-              {/* Fallback panel */}
-              <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0', display: 'grid', gap: '8px' }}>
-                <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Prueba / Fallback Rostro</span>
-                <div style={{ display: 'flex', gap: '6px' }}>
-                  <input 
-                    value={mockFace} 
-                    onChange={(e) => setMockFace(e.target.value)} 
-                    placeholder="ID de rostro (ej: demo-face-admin)"
-                    style={{ minHeight: '34px', height: '34px', padding: '6px 10px', borderRadius: '6px', fontSize: '13px' }}
-                  />
-                  <button 
-                    type="button" 
-                    className="primary" 
-                    onClick={() => identifyFace(mockFace)}
-                    style={{ minHeight: '34px', height: '34px', fontSize: '12px', borderRadius: '6px', whiteSpace: 'nowrap' }}
-                  >
-                    Usar Mock
-                  </button>
-                </div>
-              </div>
-
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
                 <button 
                   type="button" 
@@ -1019,7 +1055,7 @@ function KioskScreen() {
                   }}
                   style={{ width: '100%', minHeight: '40px', borderRadius: '10px', fontSize: '13px', fontWeight: 'bold' }}
                 >
-                  🔢 Primera vez del empleado (Ingreso por PIN)
+                  Primera vez del empleado (Ingreso por PIN)
                 </button>
                 <button 
                   type="button" 
@@ -1030,7 +1066,7 @@ function KioskScreen() {
                   }}
                   style={{ width: '100%', minHeight: '40px', borderRadius: '10px', fontSize: '13px', fontWeight: 'bold' }}
                 >
-                  🔑 Autorización Gerente (Login manual)
+                  Autorización Gerente (Login manual)
                 </button>
               </div>
 
@@ -1039,6 +1075,11 @@ function KioskScreen() {
                   0% { top: 0%; }
                   50% { top: 100%; }
                   100% { top: 0%; }
+                }
+                @keyframes pulse-ring {
+                  0% { transform: scale(0.96); opacity: 0.4; }
+                  50% { transform: scale(1.04); opacity: 0.8; }
+                  100% { transform: scale(0.96); opacity: 0.4; }
                 }
               `}</style>
             </div>
@@ -1167,21 +1208,38 @@ function KioskScreen() {
         {error && <div className="error" style={{ margin: '0', fontSize: '13px' }}>{error}</div>}
         {message && <div className="badge" style={{ margin: '0', background: '#ecfdf5', color: '#047857', padding: '10px 14px', borderRadius: '10px' }}>{message}</div>}
 
-        <div className="panel" style={{ borderRadius: '16px', padding: '20px', background: 'white', border: '1px solid #e2e8f0', display: 'grid', gap: '16px' }}>
+        <div className="panel" style={{ borderRadius: '16px', padding: '20px', background: 'white', border: '1px solid #e2e8f0', display: 'grid', gap: '12px' }}>
           <div style={{ textAlign: 'center', display: 'grid', gap: '8px' }}>
-            <span style={{ fontSize: '15px', color: '#1e293b', fontWeight: 'bold' }}>Registra tu rostro para poder ingresar en el futuro</span>
+            <span style={{ fontSize: '15px', color: '#10b981', fontWeight: '800', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              Paso {regStep + 1} de 3: {regStep === 0 ? 'MIRA AL FRENTE' : regStep === 1 ? 'GIRO A LA IZQUIERDA' : 'GIRO A LA DERECHA'}
+            </span>
+            <span style={{ fontSize: '13px', color: '#64748b', minHeight: '38px', display: 'block' }}>
+              {regStep === 0 
+                ? 'Mantén una posición centrada y mira directamente al centro de la cámara.' 
+                : regStep === 1 
+                ? 'Gira levemente la cabeza hacia tu izquierda para capturar tu perfil.' 
+                : 'Gira levemente la cabeza hacia tu derecha para capturar tu perfil.'}
+            </span>
+            
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', margin: '4px 0 10px 0' }}>
+              <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: regStep >= 0 ? '#10b981' : '#cbd5e1', transition: 'background 0.3s' }} />
+              <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: regStep >= 1 ? '#10b981' : '#cbd5e1', transition: 'background 0.3s' }} />
+              <div style={{ width: '10px', height: '10px', borderRadius: '50%', background: regStep >= 2 ? '#10b981' : '#cbd5e1', transition: 'background 0.3s' }} />
+            </div>
             
             <div style={{ 
-              width: '100%', 
-              height: '240px', 
+              width: '320px', 
+              height: '320px', 
+              margin: '0 auto',
               background: '#0f172a', 
-              borderRadius: '12px', 
+              borderRadius: '24px', 
               overflow: 'hidden', 
               position: 'relative',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              border: '2px dashed #cbd5e1'
+              border: '3px solid #10b981',
+              boxShadow: '0 8px 32px rgba(16, 185, 129, 0.25)'
             }}>
               {cameraActive ? (
                 <video 
@@ -1193,9 +1251,43 @@ function KioskScreen() {
                 />
               ) : (
                 <div style={{ color: '#94a3b8', fontSize: '14px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                  <ScanFace size={48} style={{ color: '#64748b' }} />
+                  <ScanFace size={48} style={{ color: '#10b981' }} />
                   <span>Cámara desactivada</span>
                 </div>
+              )}
+
+              {cameraActive && (
+                <>
+                  {/* Línea de escaneo */}
+                  <div style={{
+                    position: 'absolute',
+                    top: '0',
+                    left: '0',
+                    width: '100%',
+                    height: '2px',
+                    background: 'rgba(16, 185, 129, 0.8)',
+                    boxShadow: '0 0 8px 2px #10b981',
+                    animation: 'scan-line 3s linear infinite'
+                  }} />
+                  
+                  {/* Retícula de sensor circular */}
+                  <div style={{
+                    position: 'absolute',
+                    width: '180px',
+                    height: '180px',
+                    border: '2px dashed #10b981',
+                    borderRadius: '50%',
+                    animation: 'pulse-ring 2.5s infinite ease-in-out',
+                    pointerEvents: 'none'
+                  }} />
+
+                  {/* Esquinas futuristas */}
+                  <div style={{ position: 'absolute', top: '20px', left: '20px', width: '20px', height: '20px', borderLeft: '3px solid #10b981', borderTop: '3px solid #10b981' }} />
+                  <div style={{ position: 'absolute', top: '20px', right: '20px', width: '20px', height: '20px', borderRight: '3px solid #10b981', borderTop: '3px solid #10b981' }} />
+                  <div style={{ position: 'absolute', bottom: '20px', left: '20px', width: '20px', height: '20px', borderLeft: '3px solid #10b981', borderBottom: '3px solid #10b981' }} />
+                  <div style={{ position: 'absolute', bottom: '20px', right: '20px', width: '20px', height: '20px', borderRight: '3px solid #10b981', borderBottom: '3px solid #10b981' }} />
+
+                </>
               )}
             </div>
             
@@ -1212,30 +1304,10 @@ function KioskScreen() {
                 type="button" 
                 className="primary" 
                 onClick={() => registerEmployeeFace()}
-                style={{ minHeight: '38px', borderRadius: '8px', flex: '1', fontWeight: 'bold' }}
+                disabled={!cameraActive}
+                style={{ minHeight: '38px', borderRadius: '8px', flex: '1', fontWeight: 'bold', background: '#10b981', borderColor: '#10b981' }}
               >
-                Registrar Rostro y Entrar
-              </button>
-            </div>
-          </div>
-
-          {/* Test Fallback Section */}
-          <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '10px', border: '1px solid #e2e8f0', display: 'grid', gap: '8px' }}>
-            <span style={{ fontSize: '11px', color: '#64748b', fontWeight: 'bold', textTransform: 'uppercase' }}>Simular / Fallback de Prueba</span>
-            <div style={{ display: 'flex', gap: '6px' }}>
-              <input 
-                value={mockFace} 
-                onChange={(e) => setMockFace(e.target.value)} 
-                placeholder="Valor mock de rostro"
-                style={{ minHeight: '34px', height: '34px', padding: '6px 10px', borderRadius: '6px', fontSize: '13px' }}
-              />
-              <button 
-                type="button" 
-                className="primary" 
-                onClick={() => registerEmployeeFace(mockFace)}
-                style={{ minHeight: '34px', height: '34px', fontSize: '12px', borderRadius: '6px' }}
-              >
-                Completar Mock
+                {regStep === 0 ? 'Capturar Frente' : regStep === 1 ? 'Capturar Izquierda' : 'Finalizar Registro Facial'}
               </button>
             </div>
           </div>
@@ -1456,7 +1528,7 @@ function ReportsScreen() {
 
 function FaceIdScreen() {
   const [employeeId, setEmployeeId] = useState('1');
-  const [imageBase64, setImageBase64] = useState('demo-face-admin');
+  const [imageBase64, setImageBase64] = useState('');
   const [deviceCode, setDeviceCode] = useState('KIOSK-DEMO');
   const [result, setResult] = useState('');
   const [error, setError] = useState('');
@@ -1538,25 +1610,35 @@ function FaceIdScreen() {
 
   return (
     <>
-      <Header title="Face ID" subtitle="Provider mock" />
+      <Header title="Face ID" subtitle="Administración y Calibración Biométrica" />
       {error && <div className="error">{error}</div>}
       {result && <div className="badge" style={{ marginBottom: 12 }}>{result}</div>}
       
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
         <form className="panel" onSubmit={registerFace}>
-          <div className="panel-header"><strong>Registro Face ID</strong><button className="primary" type="submit"><ScanFace size={16} /> Registrar Plantilla</button></div>
+          <div className="panel-header"><strong>Registro Face ID</strong><button className="primary" type="submit" disabled={!imageBase64}><ScanFace size={16} /> Registrar Plantilla</button></div>
           <div className="grid">
             <label className="field"><span>Empleado ID</span><input value={employeeId} onChange={(event) => setEmployeeId(event.target.value)} /></label>
             <label className="field"><span>Dispositivo</span><input value={deviceCode} onChange={(event) => setDeviceCode(event.target.value)} /></label>
-            <label className="field">
-              <span>Imagen base64 o Mock Text</span>
-              <textarea 
-                value={imageBase64} 
-                onChange={(event) => setImageBase64(event.target.value)} 
-                rows={4}
-                style={{ fontFamily: 'monospace', fontSize: '11px' }}
-              />
-            </label>
+            <div className="field">
+              <span>Vista previa de captura</span>
+              <div style={{ 
+                padding: '12px', 
+                background: '#f8fafc', 
+                borderRadius: '8px', 
+                border: '1px solid #cbd5e1', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center', 
+                minHeight: '100px' 
+              }}>
+                {imageBase64 && imageBase64.startsWith('data:image') ? (
+                  <img src={imageBase64} alt="Captura" style={{ maxWidth: '100%', maxHeight: '100px', borderRadius: '6px' }} />
+                ) : (
+                  <span style={{ color: '#64748b', fontSize: '12px' }}>Toma una foto para registrar</span>
+                )}
+              </div>
+            </div>
           </div>
         </form>
 
@@ -1564,16 +1646,18 @@ function FaceIdScreen() {
           <div className="panel-header"><strong>Capturar Foto</strong></div>
           <div style={{ padding: '14px', flex: '1', display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div style={{ 
-              width: '100%', 
-              height: '200px', 
+              width: '280px', 
+              height: '280px', 
+              margin: '0 auto',
               background: '#0f172a', 
-              borderRadius: '8px', 
+              borderRadius: '20px', 
               overflow: 'hidden', 
               position: 'relative',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              border: '1px solid #cbd5df'
+              border: '3px solid #2f7dd1',
+              boxShadow: '0 6px 24px rgba(47, 125, 209, 0.2)'
             }}>
               {cameraActive ? (
                 <video 
@@ -1585,6 +1669,40 @@ function FaceIdScreen() {
                 />
               ) : (
                 <span style={{ color: '#94a3b8', fontSize: '13px' }}>Cámara apagada</span>
+              )}
+
+              {cameraActive && (
+                <>
+                  {/* Línea de escaneo */}
+                  <div style={{
+                    position: 'absolute',
+                    top: '0',
+                    left: '0',
+                    width: '100%',
+                    height: '2px',
+                    background: 'rgba(47, 125, 209, 0.8)',
+                    boxShadow: '0 0 8px 2px #2f7dd1',
+                    animation: 'scan-line 3s linear infinite'
+                  }} />
+                  
+                  {/* Retícula de sensor circular */}
+                  <div style={{
+                    position: 'absolute',
+                    width: '150px',
+                    height: '150px',
+                    border: '2px dashed #2f7dd1',
+                    borderRadius: '50%',
+                    animation: 'pulse-ring 2.5s infinite ease-in-out',
+                    pointerEvents: 'none'
+                  }} />
+
+                  {/* Esquinas futuristas */}
+                  <div style={{ position: 'absolute', top: '15px', left: '15px', width: '15px', height: '15px', borderLeft: '3px solid #2f7dd1', borderTop: '3px solid #2f7dd1' }} />
+                  <div style={{ position: 'absolute', top: '15px', right: '15px', width: '15px', height: '15px', borderRight: '3px solid #2f7dd1', borderTop: '3px solid #2f7dd1' }} />
+                  <div style={{ position: 'absolute', bottom: '15px', left: '15px', width: '15px', height: '15px', borderLeft: '3px solid #2f7dd1', borderBottom: '3px solid #2f7dd1' }} />
+                  <div style={{ position: 'absolute', bottom: '15px', right: '15px', width: '15px', height: '15px', borderRight: '3px solid #2f7dd1', borderBottom: '3px solid #2f7dd1' }} />
+
+                </>
               )}
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
@@ -1609,30 +1727,48 @@ function FaceIdScreen() {
           </div>
         </div>
       </div>
-
-      <section className="panel" style={{ marginTop: 14 }}>
-        <div className="panel-header">
-          <strong>Acciones de Simulación</strong>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="ghost" type="button" onClick={identifyFace}><ScanFace size={16} /> Identificar usando esta plantilla</button>
-            <button className="ghost" type="button" onClick={processAutoCheckout}><CalendarClock size={16} /> Auto checkout</button>
-          </div>
-        </div>
-      </section>
     </>
   );
 }
 
 function FormGrid({ fields, payload, setPayload }: { fields: Field[]; payload: Record<string, unknown>; setPayload: (value: Record<string, unknown>) => void }) {
+  const handleDeleteFace = async () => {
+    if (!payload.id) return;
+    try {
+      if (window.confirm("¿Seguro que deseas eliminar la foto base de Face ID de este empleado? El empleado tendrá que volver a registrarse con su PIN en el Kiosko.")) {
+        await api.request(`/employees/${payload.id}/face`, { method: 'DELETE' });
+        setPayload({ ...payload, face_image: null });
+        alert("Foto eliminada con éxito.");
+      }
+    } catch (err) {
+      alert("No se pudo eliminar la foto.");
+    }
+  };
+
   return (
     <div className="grid">
       {fields.map((field) => (
-        <label className="field" key={field.name}>
+        <label className="field" key={field.name} style={{ display: 'grid', gap: '6px' }}>
           <span>{field.label}</span>
           {field.type === 'textarea' ? (
             <textarea value={String(payload[field.name] ?? '')} onChange={(event) => setPayload({ ...payload, [field.name]: event.target.value })} />
           ) : field.type === 'checkbox' ? (
             <input type="checkbox" checked={Boolean(payload[field.name])} onChange={(event) => setPayload({ ...payload, [field.name]: event.target.checked })} />
+          ) : field.type === 'image_preview' ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#f8fafc', padding: '10px', borderRadius: '10px', border: '1px solid #e2e8f0', minHeight: '60px', width: '100%' }}>
+              {payload[field.name] ? (
+                <>
+                  <img src={String(payload[field.name])} alt="Face ID Base" style={{ width: '60px', height: '60px', borderRadius: '50%', objectFit: 'cover', border: '2px solid #2f7dd1' }} />
+                  <button type="button" className="ghost" onClick={handleDeleteFace} style={{ color: '#ef4444', borderColor: '#fee2e2', background: '#fef2f2', padding: '4px 10px', fontSize: '12px', minHeight: '30px' }}>
+                    Eliminar Foto
+                  </button>
+                </>
+              ) : (
+                <span style={{ color: '#64748b', fontSize: '12px', fontStyle: 'italic' }}>
+                  Sin foto Face ID (se le pedirá PIN para registrarla en Kiosko)
+                </span>
+              )}
+            </div>
           ) : (
             <input type={field.type ?? 'text'} required={field.required} value={String(payload[field.name] ?? '')} onChange={(event) => setPayload({ ...payload, [field.name]: event.target.value })} />
           )}
@@ -1645,6 +1781,9 @@ function FormGrid({ fields, payload, setPayload }: { fields: Field[]; payload: R
 function renderValue(value: unknown) {
   if (typeof value === 'boolean') return value ? <span className="badge">Si</span> : 'No';
   if (value === null || value === undefined || value === '') return '-';
+  if (typeof value === 'string' && value.startsWith('data:image/')) {
+    return <img src={value} alt="Foto Face ID" style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '50%', border: '2px solid #2f7dd1' }} />;
+  }
   return String(value);
 }
 

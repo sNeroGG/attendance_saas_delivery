@@ -25,9 +25,11 @@ from app.services.supervisor_validation import SupervisorValidationService
 router = APIRouter(tags=["phase4"])
 
 
-@router.post("/employees/{employee_id}/register-face", response_model=FaceTemplateOut)
+@router.post("/employees/{employee_id}/register-face")
 def register_face(employee_id: int, payload: FaceImageRequest, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
-    return FaceRecognitionService(db, user.company_id, user.id).register_face(employee_id, payload.image_base64)
+    images = payload.images if payload.images else [payload.image_base64]
+    FaceRecognitionService(db, user.company_id, user.id).register_face(employee_id, images)
+    return {"ok": True}
 
 
 @router.post("/employees/{employee_id}/disable-face")

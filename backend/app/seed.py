@@ -87,28 +87,6 @@ def seed(db: Session) -> None:
             db.add(XRolePermission(role_id=admin_role.id, permission_id=permission_id, create_uid=admin.id))
 
 
-    active_status = db.query(XEmployeeStatus).filter_by(company_id=company.id, code="active").first()
-    employee = db.query(HrEmployee).filter_by(company_id=company.id, user_id=admin.id).first()
-    if not employee:
-        employee = HrEmployee(
-            company_id=company.id,
-            user_id=admin.id,
-            name="Admin Demo",
-            first_name="Admin",
-            last_name="Demo",
-            employee_code="EMP-ADMIN",
-            work_email="admin@example.com",
-            employee_type="fixed",
-            employment_status_id=active_status.id if active_status else None,
-            is_active_for_work=True,
-            create_uid=admin.id,
-            write_uid=admin.id,
-        )
-        db.add(employee)
-        db.flush()
-    if not admin.employee_id:
-        admin.employee_id = employee.id
-
     device = db.query(XDevice).filter_by(company_id=company.id, device_code="KIOSK-DEMO").first()
     if not device:
         db.add(XDevice(company_id=company.id, name="Kiosko Demo", device_code="KIOSK-DEMO", device_type="kiosk", create_uid=admin.id, write_uid=admin.id))
@@ -117,74 +95,6 @@ def seed(db: Session) -> None:
         exists = db.query(XAttendanceEventType).filter_by(company_id=company.id, code=item["code"]).first()
         if not exists:
             db.add(XAttendanceEventType(company_id=company.id, create_uid=admin.id, write_uid=admin.id, **item))
-
-
-    employee_role = db.query(XEmployeeRole).filter_by(employee_id=employee.id, role_id=admin_role.id).first()
-    if not employee_role:
-        db.add(XEmployeeRole(employee_id=employee.id, role_id=admin_role.id, create_uid=admin.id))
-
-    template = db.query(XAssignmentTemplate).filter_by(company_id=company.id, name="Checklist inicio de jornada").first()
-    if not template:
-        template = XAssignmentTemplate(
-            company_id=company.id,
-            name="Checklist inicio de jornada",
-            description="Asignacion operativa demo generada despues del check-in",
-            state="active",
-            active=True,
-            create_uid=admin.id,
-            write_uid=admin.id,
-        )
-        db.add(template)
-        db.flush()
-
-    question = db.query(XAssignmentQuestion).filter_by(company_id=company.id, template_id=template.id, name="Area lista").first()
-    if not question:
-        db.add(XAssignmentQuestion(
-            company_id=company.id,
-            template_id=template.id,
-            name="Area lista",
-            question_text="Confirma que tu area esta lista para iniciar operaciones.",
-            question_type="boolean",
-            required=True,
-            requires_supervisor_validation=False,
-            sequence=10,
-            active=True,
-            create_uid=admin.id,
-            write_uid=admin.id,
-        ))
-
-    rule = db.query(XRule).filter_by(company_id=company.id, name="Checklist global por jornada").first()
-    if not rule:
-        db.add(XRule(
-            company_id=company.id,
-            name="Checklist global por jornada",
-            rule_type="assignment",
-            assignment_template_id=template.id,
-            priority=100,
-            frequency_type="per_shift",
-            required=True,
-            blocks_check_in=False,
-            blocks_check_out=True,
-            requires_supervisor_validation=False,
-            active=True,
-            create_uid=admin.id,
-            write_uid=admin.id,
-        ))
-
-
-    auto_rule = db.query(XAutoCheckoutRule).filter_by(company_id=company.id, employee_id=employee.id).first()
-    if not auto_rule:
-        db.add(XAutoCheckoutRule(
-            company_id=company.id,
-            employee_id=employee.id,
-            auto_checkout_enabled=True,
-            checkout_time="18:00",
-            timezone="America/El_Salvador",
-            note="Auto checkout demo",
-            active=True,
-            create_uid=admin.id,
-            write_uid=admin.id,
-        ))
 
     db.commit()
 

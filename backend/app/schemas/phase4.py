@@ -7,7 +7,8 @@ class ORMModel(BaseModel):
 
 
 class FaceImageRequest(BaseModel):
-    image_base64: str
+    image_base64: str | None = None
+    images: list[str] | None = None
     device_code: str | None = None
 
 
