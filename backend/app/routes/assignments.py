@@ -9,6 +9,7 @@ from app.schemas.assignments import (
     AssignmentQuestionOut,
     AssignmentTemplateIn,
     AssignmentTemplateOut,
+    EmployeeAssignmentIn,
     EmployeeAssignmentOut,
     SaveAssignmentAnswersRequest,
     SupervisorValidationRequest,
@@ -133,3 +134,31 @@ def validate_assignment(record_id: int, payload: SupervisorValidationRequest, db
 @router.post("/employee-assignments/{record_id}/reject", response_model=EmployeeAssignmentOut)
 def reject_assignment(record_id: int, payload: SupervisorValidationRequest, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
     return AssignmentService(db, user.company_id, user.id).reject_assignment(record_id, payload.supervisor_pin, payload.notes)
+
+
+@router.post("/employee-assignments", response_model=EmployeeAssignmentOut)
+def create_employee_assignment(payload: EmployeeAssignmentIn, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    record = XEmployeeAssignment(
+        company_id=user.company_id,
+        employee_id=payload.employee_id,
+        template_id=payload.template_id,
+        required=payload.required,
+        blocks_check_in=payload.blocks_check_in,
+        blocks_check_out=payload.blocks_check_out,
+        state=payload.state,
+        create_uid=user.id,
+        write_uid=user.id,
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+@router.put("/employee-assignments/{record_id}", response_model=EmployeeAssignmentOut)
+def update_employee_assignment(record_id: int, payload: EmployeeAssignmentIn, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    record = get_company_record(db, XEmployeeAssignment, record_id, user)
+    apply_values(record, to_dict(payload), user.id)
+    db.commit()
+    db.refresh(record)
+    return record

@@ -85,6 +85,7 @@ class UserOut(ORMModel):
     name: str
     login: str
     email: str | None
+    pin_plain: str | None = None
     is_superadmin: bool
     is_company_admin: bool
     active: bool

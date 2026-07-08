@@ -62,6 +62,7 @@ class ResUser(Base, CompanyScopedMixin, AuditMixin, ActiveMixin):
     email: Mapped[str | None] = mapped_column(String(160), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     pin_hash: Mapped[str | None] = mapped_column(String(255))
+    pin_plain: Mapped[str | None] = mapped_column(String(40))
     is_superadmin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_company_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_login: Mapped[datetime | None] = mapped_column(DateTime)

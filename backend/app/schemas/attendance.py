@@ -33,8 +33,6 @@ class AttendanceEventTypeIn(BaseModel):
     counts_as_non_worked: bool = False
     allows_assignments_after: bool = False
     blocks_assignments_after: bool = False
-    requires_face_id: bool = False
-    allows_pin: bool = True
     requires_supervisor_validation: bool = False
     requires_note: bool = False
     requires_evidence: bool = False
@@ -82,9 +80,11 @@ class AttendanceEventOut(ORMModel):
     id: int
     company_id: int
     employee_id: int
+    employee_name: str | None = None
     branch_id: int | None
     device_id: int | None
     event_type_id: int
+    event_type_name: str | None = None
     shift_id: int | None
     timestamp: datetime
     method: str

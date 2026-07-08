@@ -55,17 +55,50 @@ class AttendanceLogicService:
             .order_by(XAttendanceEventType.sequence, XAttendanceEventType.id)
             .all()
         )
+        
+        # 1. Sin jornada iniciada
         if not current_shift:
             return [item for item in event_types if item.opens_shift]
+            
         last_event = self.get_last_event(employee_id)
         if not last_event or last_event.shift_id != current_shift.id:
-            return [item for item in event_types if item.direction == "out"]
-        last_type = self.db.get(XAttendanceEventType, last_event.event_type_id)
-        if last_type and last_type.closes_shift:
-            return []
-        if last_type and last_type.direction == "out":
-            return [item for item in event_types if item.direction == "in" and not item.opens_shift]
-        return [item for item in event_types if item.direction == "out"]
+            # Caso fallback: tiene jornada pero no hay eventos registrados
+            last_code = "shift_in"
+        else:
+            last_type = self.db.get(XAttendanceEventType, last_event.event_type_id)
+            last_code = last_type.code if last_type else "shift_in"
+            
+        # 5. Jornada finalizada (si el último evento cerró la jornada)
+        if last_event and last_event.shift_id == current_shift.id:
+            last_type = self.db.get(XAttendanceEventType, last_event.event_type_id)
+            if last_type and last_type.closes_shift:
+                return []
+                
+        # 3. En break (el último evento fue salir a break)
+        if last_code == "break_out":
+            return [item for item in event_types if item.code == "break_in"]
+            
+        # 4. En comida (el último evento fue salir a comida)
+        if last_code == "meal_out":
+            return [item for item in event_types if item.code == "meal_in"]
+            
+        # 2. En jornada activa
+        # Mostrar: Salir a break, Salir a comida, y Salir de trabajar (si no hay salida automática)
+        from app.services.auto_checkout import AutoCheckoutService
+        auto_rule = AutoCheckoutService(self.db, self.company_id).get_auto_checkout_rule(employee_id, employee.branch_id)
+        has_auto_checkout = auto_rule is not None
+        
+        allowed = []
+        for item in event_types:
+            if item.opens_shift:
+                continue
+            if item.code in ["break_in", "meal_in"]:
+                continue
+            if item.closes_shift and has_auto_checkout:
+                continue
+            allowed.append(item)
+            
+        return allowed
 
     def create_attendance_event(
         self,
@@ -86,8 +119,6 @@ class AttendanceLogicService:
             raise HTTPException(status_code=422, detail="Este tipo de evento requiere nota")
         if event_type.requires_evidence and not evidence_url:
             raise HTTPException(status_code=422, detail="Este tipo de evento requiere evidencia")
-        if method == "pin" and not event_type.allows_pin:
-            raise HTTPException(status_code=422, detail="Este tipo de evento no permite PIN")
 
         current_shift = self.get_current_shift(employee_id)
         if not current_shift and not event_type.opens_shift:

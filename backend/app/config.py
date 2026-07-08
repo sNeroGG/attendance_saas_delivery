@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     secret_key: str = "change_me_to_a_long_random_secret"
     access_token_expire_minutes: int = 480
     cors_origins: str = "http://localhost:5175,http://127.0.0.1:5175"
+    environment: str = "development"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

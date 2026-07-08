@@ -5,10 +5,18 @@ from app.config import get_settings
 from app.routes import assignments, attendance, auth, branches, companies, departments, devices, employee_statuses, employees, jobs, kiosk, no_attendance, permissions, phase4, roles, rules, users
 
 settings = get_settings()
-app = FastAPI(title="Attendance SaaS", version="0.1.0")
+docs_url = "/docs" if settings.environment == "development" else None
+redoc_url = "/redoc" if settings.environment == "development" else None
+
+app = FastAPI(
+    title="Attendance SaaS", 
+    version="0.1.0",
+    docs_url=docs_url,
+    redoc_url=redoc_url,
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
+    allow_origin_regex="https?://.*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

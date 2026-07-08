@@ -50,7 +50,27 @@ def update_event_type(record_id: int, payload: AttendanceEventTypeIn, db: Sessio
 
 @router.get("/events", response_model=list[AttendanceEventOut])
 def list_events(db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
-    return company_query(db, XAttendanceEvent, user).order_by(XAttendanceEvent.timestamp.desc(), XAttendanceEvent.id.desc()).limit(300).all()
+    from app.models import HrEmployee, XAttendanceEventType
+    query = (
+        db.query(XAttendanceEvent)
+        .filter(XAttendanceEvent.company_id == user.company_id)
+        .order_by(XAttendanceEvent.timestamp.desc(), XAttendanceEvent.id.desc())
+        .limit(300)
+    )
+    events = query.all()
+    results = []
+    for event in events:
+        emp = db.get(HrEmployee, event.employee_id)
+        emp_name = emp.name if emp else f"ID: {event.employee_id}"
+        
+        etype = db.get(XAttendanceEventType, event.event_type_id)
+        etype_name = etype.name if etype else f"ID: {event.event_type_id}"
+        
+        d = {c.name: getattr(event, c.name) for c in event.__table__.columns}
+        d["employee_name"] = emp_name
+        d["event_type_name"] = etype_name
+        results.append(d)
+    return results
 
 
 @router.post("/events", response_model=AttendanceEventOut)

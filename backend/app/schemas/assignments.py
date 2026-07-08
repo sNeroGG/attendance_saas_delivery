@@ -112,3 +112,12 @@ class RuleIn(BaseModel):
 class RuleOut(RuleIn, ORMModel):
     id: int
     company_id: int
+
+
+class EmployeeAssignmentIn(BaseModel):
+    employee_id: int
+    template_id: int
+    required: bool = True
+    blocks_check_in: bool = False
+    blocks_check_out: bool = False
+    state: str = "pending"

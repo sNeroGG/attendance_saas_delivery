@@ -8,7 +8,14 @@ export type ApiUser = {
   is_company_admin: boolean;
 };
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8095/api';
+const API_BASE_URL = (() => {
+  const envUrl = import.meta.env.VITE_API_BASE_URL;
+  if (envUrl && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
+    return envUrl;
+  }
+  const hostname = window.location.hostname;
+  return `http://${hostname}:8095/api`;
+})();
 
 export class ApiClient {
   token = localStorage.getItem('attendance_saas_token') ?? '';

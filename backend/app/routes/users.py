@@ -27,6 +27,7 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db), user: ResUse
         company_id=user.company_id,
         password_hash=hash_secret(payload.password) if payload.password else hash_secret("default_dummy_password_123"),
         pin_hash=hash_secret(payload.pin) if payload.pin else None,
+        pin_plain=payload.pin,
         create_uid=user.id,
         write_uid=user.id,
     )
@@ -50,6 +51,7 @@ def update_user(record_id: int, payload: UserUpdate, db: Session = Depends(get_d
         record.password_hash = hash_secret(payload.password)
     if payload.pin:
         record.pin_hash = hash_secret(payload.pin)
+        record.pin_plain = payload.pin
     db.commit()
     db.refresh(record)
     return record

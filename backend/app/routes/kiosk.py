@@ -127,3 +127,14 @@ def create_kiosk_event(payload: KioskAttendanceEventCreate, db: Session = Depend
         evidence_url=payload.evidence_url,
         source="kiosk",
     )
+
+
+@router.post("/unlock-device")
+def unlock_device(payload: KioskIdentifyPinRequest, db: Session = Depends(get_db)):
+    device = get_device_by_code(db, payload.device_code)
+    from app.services.supervisor_validation import SupervisorValidationService
+    try:
+        SupervisorValidationService(db, device.company_id).validate_supervisor_pin(payload.pin)
+        return {"status": "ok", "message": "Dispositivo desbloqueado"}
+    except Exception:
+        raise HTTPException(status_code=401, detail="PIN de Gerente invalido o sin permisos")
