@@ -194,3 +194,15 @@ class AssignPermissionRequest(BaseModel):
 
 class AssignRoleRequest(BaseModel):
     role_id: int
+
+
+class ManagerTemporaryPinOut(ORMModel):
+    id: int
+    company_id: int
+    pin: str
+    created_by_user_id: int
+    created_at: datetime
+    expires_at: datetime
+    used_at: datetime | None
+    created_by_name: str | None = None
+

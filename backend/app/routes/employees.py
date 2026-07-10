@@ -10,9 +10,31 @@ from app.security.auth import get_current_user
 router = APIRouter(prefix="/employees", tags=["employees"])
 
 
+def populate_employee_user_fields(db: Session, employee: HrEmployee) -> HrEmployee:
+    user = None
+    if employee.user_id:
+        user = db.get(ResUser, employee.user_id)
+    else:
+        user = db.query(ResUser).filter_by(employee_id=employee.id, active=True).first()
+        
+    if user:
+        employee.user_login = user.login
+        employee.user_pin = user.pin_plain
+        employee.create_user_profile = True
+        if not employee.user_id:
+            employee.user_id = user.id
+    else:
+        employee.user_login = None
+        employee.user_pin = None
+        employee.create_user_profile = False
+    return employee
+
+
 @router.get("", response_model=list[EmployeeOut])
 def list_employees(db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
     employees = company_query(db, HrEmployee, user).order_by(HrEmployee.name).all()
+    for emp in employees:
+        populate_employee_user_fields(db, emp)
     return employees
 
 
@@ -43,6 +65,7 @@ def create_employee(payload: EmployeeIn, db: Session = Depends(get_db), user: Re
             email=record.work_email,
             password_hash=hash_secret("default_dummy_password_123"),
             pin_hash=hash_secret(user_pin) if user_pin else None,
+            pin_plain=user_pin,
             create_uid=user.id,
             write_uid=user.id,
         )
@@ -52,12 +75,14 @@ def create_employee(payload: EmployeeIn, db: Session = Depends(get_db), user: Re
 
     db.commit()
     db.refresh(record)
+    populate_employee_user_fields(db, record)
     return record
 
 
 @router.get("/{record_id}", response_model=EmployeeOut)
 def get_employee(record_id: int, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
     emp = get_company_record(db, HrEmployee, record_id, user)
+    populate_employee_user_fields(db, emp)
     return emp
 
 
@@ -65,12 +90,61 @@ def get_employee(record_id: int, db: Session = Depends(get_db), user: ResUser = 
 def update_employee(record_id: int, payload: EmployeeIn, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
     record = get_company_record(db, HrEmployee, record_id, user)
     data = payload.model_dump()
-    data.pop("create_user_profile", None)
-    data.pop("user_login", None)
-    data.pop("user_pin", None)
+    create_user_profile = data.pop("create_user_profile", False)
+    user_login = data.pop("user_login", None)
+    user_pin = data.pop("user_pin", None)
+
     apply_values(record, data, user.id)
+    db.flush()
+
+    associated_user = None
+    if record.user_id:
+        associated_user = db.get(ResUser, record.user_id)
+    else:
+        associated_user = db.query(ResUser).filter_by(employee_id=record.id, company_id=user.company_id).first()
+
+    from app.security.auth import hash_secret
+    if associated_user:
+        # Update existing user profile
+        if user_login:
+            associated_user.login = user_login
+        if user_pin:
+            associated_user.pin_hash = hash_secret(user_pin)
+            associated_user.pin_plain = user_pin
+        associated_user.email = record.work_email
+        associated_user.name = record.name
+        associated_user.write_uid = user.id
+        db.add(associated_user)
+        db.flush()
+        if not record.user_id:
+            record.user_id = associated_user.id
+    elif create_user_profile or user_login or user_pin:
+        # Create a new user profile since it doesn't exist
+        login_name = user_login or record.employee_code or f"user_{record.id}"
+        # Validate unique login
+        existing_user = db.query(ResUser).filter_by(company_id=user.company_id, login=login_name).first()
+        if existing_user:
+            login_name = f"{login_name}_{record.id}"
+            
+        new_user = ResUser(
+            company_id=user.company_id,
+            employee_id=record.id,
+            name=record.name,
+            login=login_name,
+            email=record.work_email,
+            password_hash=hash_secret("default_dummy_password_123"),
+            pin_hash=hash_secret(user_pin) if user_pin else None,
+            pin_plain=user_pin,
+            create_uid=user.id,
+            write_uid=user.id,
+        )
+        db.add(new_user)
+        db.flush()
+        record.user_id = new_user.id
+
     db.commit()
     db.refresh(record)
+    populate_employee_user_fields(db, record)
     return record
 
 

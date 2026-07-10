@@ -1800,6 +1800,214 @@ function ReportsScreen() {
   );
 }
 
+function TemporaryManagerPinScreen() {
+  const [items, setItems] = useState<any[]>([]);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [now, setNow] = useState(new Date());
+
+  // Periodically update the local time to update the countdown
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNow(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  async function load() {
+    setError('');
+    try {
+      const data = await api.request<any[]>('/temporary-pins');
+      setItems(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo cargar el historial');
+    }
+  }
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  async function generatePin() {
+    setError('');
+    setMessage('');
+    setLoading(true);
+    try {
+      await api.request<any>('/temporary-pins', { method: 'POST' });
+      setMessage('¡PIN temporal generado con éxito!');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo generar el PIN');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Find the currently active, unexpired, and unused PIN from items
+  const activePin = useMemo(() => {
+    return items.find(item => {
+      if (item.used_at) return false;
+      const expDate = new Date(item.expires_at);
+      return expDate > now;
+    });
+  }, [items, now]);
+
+  // Format countdown text MM:SS
+  const countdownText = useMemo(() => {
+    if (!activePin) return '';
+    const diffMs = new Date(activePin.expires_at).getTime() - now.getTime();
+    if (diffMs <= 0) return '00:00';
+    const minutes = Math.floor(diffMs / 60000);
+    const seconds = Math.floor((diffMs % 60000) / 1000);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  }, [activePin, now]);
+
+  // Determine the status of a PIN
+  function getPinStatus(pin: any) {
+    if (pin.used_at) {
+      return { label: 'Usado', color: '#1e3a8a', bg: '#dbeafe', dateText: new Date(pin.used_at).toLocaleTimeString() };
+    }
+    const expDate = new Date(pin.expires_at);
+    if (expDate <= now) {
+      return { label: 'Expirado', color: '#9f1239', bg: '#ffe4e6', dateText: '' };
+    }
+    return { label: 'Activo', color: '#065f46', bg: '#d1fae5', dateText: countdownText };
+  }
+
+  return (
+    <>
+      <Header title="PIN Temporal de Gerente" subtitle="Generar códigos PIN de un solo uso para autorizaciones" />
+      
+      {error && <div className="error" style={{ marginBottom: 16 }}>{error}</div>}
+      {message && <div className="badge" style={{ background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '10px 14px', marginBottom: 16, display: 'flex', fontWeight: 'bold' }}>{message}</div>}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px', alignItems: 'start' }}>
+        
+        {/* Generador de PIN */}
+        <section className="panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px', color: '#0f172a' }}>Código de Autorización Temporal</h2>
+          
+          {activePin ? (
+            <div style={{ 
+              background: 'linear-gradient(135deg, #eff6ff, #dbeafe)', 
+              border: '2px dashed #3b82f6', 
+              borderRadius: '16px', 
+              padding: '24px 40px', 
+              marginBottom: '20px',
+              boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              width: '100%',
+              maxWidth: '360px'
+            }}>
+              <span style={{ fontSize: '11px', color: '#1d4ed8', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>PIN Activo</span>
+              <span style={{ fontSize: '48px', fontWeight: '900', color: '#1e3a8a', letterSpacing: '4px', lineHeight: '1.2', fontFamily: 'monospace' }}>
+                {activePin.pin}
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '12px', background: '#ffffff', padding: '4px 12px', borderRadius: '20px', border: '1px solid #bfdbfe' }}>
+                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }}></span>
+                <span style={{ fontSize: '13px', color: '#1e40af', fontWeight: 'bold' }}>Expira en: {countdownText}</span>
+              </div>
+            </div>
+          ) : (
+            <div style={{ 
+              background: '#f8fafc', 
+              border: '1px solid #e2e8f0', 
+              borderRadius: '16px', 
+              padding: '24px 40px', 
+              marginBottom: '20px',
+              width: '100%',
+              maxWidth: '360px',
+              color: '#64748b'
+            }}>
+              No hay ningún PIN temporal activo actualmente.
+            </div>
+          )}
+
+          <button 
+            className="primary" 
+            type="button" 
+            onClick={generatePin} 
+            disabled={loading}
+            style={{ 
+              minHeight: '46px', 
+              padding: '0 24px', 
+              fontSize: '15px', 
+              fontWeight: 'bold', 
+              borderRadius: '10px',
+              boxShadow: '0 4px 12px rgba(47,125,209,0.15)',
+              cursor: loading ? 'not-allowed' : 'pointer'
+            }}
+          >
+            {loading ? 'Generando...' : activePin ? 'Generar Nuevo PIN' : 'Generar PIN Temporal'}
+          </button>
+          
+          <p style={{ fontSize: '12px', color: '#64748b', marginTop: '14px', maxWidth: '380px' }}>
+            Este PIN de gerente será válido para desvinculaciones, marcaciones y validaciones en cualquier dispositivo de la compañía durante los próximos 5 minutos o hasta que sea utilizado una vez.
+          </p>
+        </section>
+
+        {/* Historial / Registro */}
+        <section className="panel">
+          <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <strong>Historial de PINs Generados (Registro)</strong>
+            <button className="ghost" type="button" onClick={load} style={{ minHeight: '32px' }}>
+              <RefreshCw size={14} /> Actualizar
+            </button>
+          </div>
+          
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>PIN</th>
+                  <th>Creador</th>
+                  <th>Fecha de Creación</th>
+                  <th>Expiración</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => {
+                  const status = getPinStatus(item);
+                  return (
+                    <tr key={String(item.id)}>
+                      <td style={{ fontWeight: 'bold', fontFamily: 'monospace', letterSpacing: '1px' }}>{item.pin}</td>
+                      <td>{renderValue(item.created_by_name)}</td>
+                      <td>{new Date(item.created_at).toLocaleString()}</td>
+                      <td>{new Date(item.expires_at).toLocaleString()}</td>
+                      <td>
+                        <span style={{ 
+                          display: 'inline-flex', 
+                          padding: '3px 8px', 
+                          fontSize: '11px', 
+                          fontWeight: 'bold', 
+                          borderRadius: '6px',
+                          color: status.color,
+                          background: status.bg
+                        }}>
+                          {status.label} {status.dateText ? `(${status.dateText})` : ''}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {!items.length && (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: 'center', color: '#64748b' }}>No se han generado PINs temporales.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </>
+  );
+}
+
 function FormGrid({ fields, payload, setPayload }: { fields: Field[]; payload: Record<string, unknown>; setPayload: (value: Record<string, unknown>) => void }) {
   return (
     <div className="grid">
@@ -1881,6 +2089,7 @@ export function App() {
           <button className={screen === 'departments' ? 'active' : ''} onClick={() => setScreen('departments')}><Building2 /> Departamentos</button>
           <button className={screen === 'devices' ? 'active' : ''} onClick={() => setScreen('devices')}><MonitorSmartphone /> Dispositivos Kiosko</button>
           <button className={screen === 'users' ? 'active' : ''} onClick={() => setScreen('users')}><UserRound /> Usuarios Admin</button>
+          <button className={screen === 'temporary-manager-pin' ? 'active' : ''} onClick={() => setScreen('temporary-manager-pin')}><ShieldCheck size={18} /> PIN Temporal Gerente</button>
           
           <button className={screen === 'assignment-templates' ? 'active' : ''} onClick={() => setScreen('assignment-templates')}><ClipboardList /> Plantillas Tareas</button>
           <button className={screen === 'assignment-questions' ? 'active' : ''} onClick={() => setScreen('assignment-questions')}><ListChecks /> Preguntas Plantilla</button>
@@ -1905,6 +2114,7 @@ export function App() {
         {screen === 'permissions' && <PermissionScreen />}
         {screen === 'assignment-questions' && <AssignmentQuestionsScreen />}
         {screen === 'reports' && <ReportsScreen />}
+        {screen === 'temporary-manager-pin' && <TemporaryManagerPinScreen />}
         {resource && <ResourceScreen config={resource} />}
         {tableScreen && <TableScreen config={tableScreen} />}
         {screen === 'kiosk' && <KioskScreen />}

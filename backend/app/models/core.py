@@ -390,3 +390,15 @@ class XAutoCheckoutRule(Base, CompanyScopedMixin, AuditMixin, ActiveMixin):
     timezone: Mapped[str] = mapped_column(String(80), default="America/El_Salvador", nullable=False)
     note: Mapped[str | None] = mapped_column(Text)
 
+
+class XManagerTemporaryPin(Base, CompanyScopedMixin):
+    __tablename__ = "x_manager_temporary_pin"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pin: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    created_by_user_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
