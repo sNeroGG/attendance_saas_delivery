@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import HrEmployee, ResUser, XEmployeeRole, XEmployeeStatusHistory
+from app.models import HrEmployee, ResUser, XEmployeeRole, XEmployeeStatusHistory, XFaceTemplate
 from app.routes.common import apply_values, company_query, get_company_record, to_dict
 from app.schemas.core import AssignRoleRequest, ChangeStatusRequest, EmployeeIn, EmployeeOut
 from app.security.auth import get_current_user
@@ -27,6 +27,10 @@ def populate_employee_user_fields(db: Session, employee: HrEmployee) -> HrEmploy
         employee.user_login = None
         employee.user_pin = None
         employee.create_user_profile = False
+
+    # Cargar foto base de Face ID
+    template = db.query(XFaceTemplate).filter_by(employee_id=employee.id, active=True).first()
+    employee.face_image = template.face_encoding if template else None
     return employee
 
 
@@ -175,5 +179,15 @@ def assign_role(record_id: int, payload: AssignRoleRequest, db: Session = Depend
     exists = db.query(XEmployeeRole).filter_by(employee_id=employee.id, role_id=payload.role_id).first()
     if not exists:
         db.add(XEmployeeRole(employee_id=employee.id, role_id=payload.role_id, create_uid=user.id))
+        db.commit()
+    return {"ok": True}
+
+
+@router.delete("/{record_id}/face")
+def delete_employee_face(record_id: int, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    employee = get_company_record(db, HrEmployee, record_id, user)
+    template = db.query(XFaceTemplate).filter_by(company_id=user.company_id, employee_id=employee.id, active=True).first()
+    if template:
+        template.active = False
         db.commit()
     return {"ok": True}

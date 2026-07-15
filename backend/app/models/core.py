@@ -201,6 +201,8 @@ class XAttendanceEventType(Base, CompanyScopedMixin, AuditMixin, ActiveMixin):
     allows_assignments_after: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     blocks_assignments_after: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     requires_supervisor_validation: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    requires_face_id: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    allows_pin: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     requires_note: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     requires_evidence: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     sequence: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
@@ -400,5 +402,31 @@ class XManagerTemporaryPin(Base, CompanyScopedMixin):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class XFaceTemplate(Base, CompanyScopedMixin, AuditMixin, ActiveMixin):
+    __tablename__ = "x_face_template"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    employee_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    face_encoding: Mapped[str] = mapped_column(Text, nullable=False)
+    face_feature: Mapped[str | None] = mapped_column(Text, nullable=True)
+    provider: Mapped[str] = mapped_column(String(40), default="opencv", nullable=False)
+    confidence_threshold: Mapped[float] = mapped_column(Float, default=0.40, nullable=False)
+
+
+class XBiometricLog(Base, CompanyScopedMixin):
+    __tablename__ = "x_biometric_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    employee_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    device_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    event_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    method: Mapped[str] = mapped_column(String(40), nullable=False)
+    success: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    confidence_score: Mapped[float | None] = mapped_column(Float)
+    failure_reason: Mapped[str | None] = mapped_column(String(255))
+    ip_address: Mapped[str | None] = mapped_column(String(80))
+    timestamp: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 

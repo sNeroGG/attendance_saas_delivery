@@ -27,6 +27,8 @@ from app.models.core import (
     XAuditLog,
     XAutoCheckoutRule,
     XManagerTemporaryPin,
+    XFaceTemplate,
+    XBiometricLog,
 )
 
 __all__ = [
@@ -58,5 +60,7 @@ __all__ = [
     "XAuditLog",
     "XAutoCheckoutRule",
     "XManagerTemporaryPin",
+    "XFaceTemplate",
+    "XBiometricLog",
 ]
 

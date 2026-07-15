@@ -1,6 +1,6 @@
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from app.models import HrAttendance, XAssignmentValidation, XNoAttendanceNote, XAuditLog, XEmployeeAssignment
+from app.models import HrAttendance, XAssignmentValidation, XNoAttendanceNote, XAuditLog, XEmployeeAssignment, XBiometricLog
 
 
 class ReportService:
@@ -19,6 +19,10 @@ class ReportService:
     def attendance_exceptions(self) -> list[dict]:
         rows = self.db.query(XNoAttendanceNote.reason, func.count(XNoAttendanceNote.id)).filter_by(company_id=self.company_id).group_by(XNoAttendanceNote.reason).all()
         return [{"reason": r[0], "count": int(r[1])} for r in rows]
+
+    def biometric(self) -> list[dict]:
+        rows = self.db.query(XBiometricLog.method, XBiometricLog.success, func.count(XBiometricLog.id)).filter_by(company_id=self.company_id).group_by(XBiometricLog.method, XBiometricLog.success).all()
+        return [{"method": r[0], "success": bool(r[1]), "count": int(r[2])} for r in rows]
 
 
 

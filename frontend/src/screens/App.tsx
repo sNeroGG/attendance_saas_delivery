@@ -21,6 +21,7 @@ import {
   MonitorSmartphone,
   RefreshCw,
   Save,
+  ScanFace,
   Settings,
   ShieldCheck,
   TriangleAlert,
@@ -85,8 +86,9 @@ const resources: ResourceConfig[] = [
     title: 'Empleados',
     endpoint: '/employees',
     icon: <UsersRound />,
-    columns: ['id', 'name', 'employee_code', 'job_title', 'employee_type', 'is_active_for_work', 'active'],
+    columns: ['id', 'face_image', 'name', 'employee_code', 'job_title', 'employee_type', 'is_active_for_work', 'active'],
     fields: [
+      { name: 'face_image', label: 'Rostro Face ID', type: 'image_preview' },
       { name: 'name', label: 'Nombre visible (Obligatorio)', required: true },
       { name: 'employee_code', label: 'Código empleado (Obligatorio)', required: true },
       { name: 'create_user_profile', label: '¿Crear usuario de acceso automáticamente?', type: 'checkbox' },
@@ -428,142 +430,267 @@ function LoginScreen({ onLogin }: { onLogin: (user: ApiUser) => void }) {
 function Dashboard({ user }: { user: ApiUser }) {
   const [metrics, setMetrics] = useState({
     totalEmployees: 0,
+    activeEmployees: 0,
+    employeesWithFaceId: 0,
     activeShifts: 0,
+    closedShiftsToday: 0,
     pendingTasks: 0,
+    completedTasks: 0,
     totalDevices: 0
   });
-  const [activeWorkers, setActiveWorkers] = useState<{ id: number; name: string; time: string }[]>([]);
-  const [tasksToApprove, setTasksToApprove] = useState<{ id: number; employeeName: string; templateId: number }[]>([]);
+  const [activeWorkers, setActiveWorkers] = useState<{ id: number; name: string; time: string; branch: string; faceRegistered: boolean }[]>([]);
+  const [tasksToApprove, setTasksToApprove] = useState<{ id: number; employeeName: string; templateName: string; date: string }[]>([]);
+  const [devicesList, setDevicesList] = useState<{ id: number; name: string; device_code: string; active: boolean }[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    async function loadDashboardData() {
-      try {
-        const emps = await api.request<any[]>('/employees');
-        const sfts = await api.request<any[]>('/attendance/shifts');
-        const assigns = await api.request<any[]>('/employee-assignments');
-        const devs = await api.request<any[]>('/devices');
+  async function loadDashboardData() {
+    try {
+      const emps = await api.request<any[]>('/employees');
+      const sfts = await api.request<any[]>('/attendance/shifts');
+      const assigns = await api.request<any[]>('/employee-assignments');
+      const devs = await api.request<any[]>('/devices');
 
-        const activeSfts = sfts.filter(s => s.state === 'open');
-        const pendingAssigns = assigns.filter(a => a.state === 'validation_pending');
+      const activeSfts = sfts.filter(s => s.state === 'open');
+      const closedTodaySfts = sfts.filter(s => s.state === 'closed' || s.check_out_at);
+      const pendingAssigns = assigns.filter(a => a.state === 'validation_pending');
+      const completedAssigns = assigns.filter(a => a.state === 'completed');
 
-        setMetrics({
-          totalEmployees: emps.length,
-          activeShifts: activeSfts.length,
-          pendingTasks: pendingAssigns.length,
-          totalDevices: devs.length
-        });
+      setMetrics({
+        totalEmployees: emps.length,
+        activeEmployees: emps.filter(e => e.active).length,
+        employeesWithFaceId: emps.filter(e => e.face_image).length,
+        activeShifts: activeSfts.length,
+        closedShiftsToday: closedTodaySfts.length,
+        pendingTasks: pendingAssigns.length,
+        completedTasks: completedAssigns.length,
+        totalDevices: devs.length
+      });
 
-        // Resolver nombres de trabajadores activos
-        const workers = activeSfts.map(s => {
-          const emp = emps.find(e => e.id === s.employee_id);
-          const time = s.check_in_at ? fmtTimeSV(s.check_in_at) : 'N/A';
-          return {
-            id: s.id,
-            name: emp ? emp.name : `Empleado #${s.employee_id}`,
-            time
-          };
-        });
-        setActiveWorkers(workers);
+      // Resolver nombres y detalles de trabajadores activos
+      const workers = activeSfts.map(s => {
+        const emp = emps.find(e => e.id === s.employee_id);
+        const time = s.check_in_at ? fmtTimeSV(s.check_in_at) : 'N/A';
+        return {
+          id: s.id,
+          name: emp ? emp.name : `Empleado #${s.employee_id}`,
+          time,
+          branch: emp?.branch_name || 'Sucursal Principal',
+          faceRegistered: !!(emp && emp.face_image)
+        };
+      });
+      setActiveWorkers(workers);
 
-        // Resolver nombres de tareas que necesitan aprobación
-        const tasks = pendingAssigns.map(a => {
-          const emp = emps.find(e => e.id === a.employee_id);
-          return {
-            id: a.id,
-            employeeName: emp ? emp.name : `Empleado #${a.employee_id}`,
-            templateId: a.template_id
-          };
-        });
-        setTasksToApprove(tasks);
-      } catch (err) {
-        console.error("Error loading dashboard data", err);
-      } finally {
-        setLoading(false);
-      }
+      // Resolver nombres de tareas pendientes de validación
+      const tasks = pendingAssigns.map(a => {
+        const emp = emps.find(e => e.id === a.employee_id);
+        return {
+          id: a.id,
+          employeeName: emp ? emp.name : `Empleado #${a.employee_id}`,
+          templateName: a.template_name || `Plantilla #${a.template_id}`,
+          date: a.assigned_at ? fmtSV(a.assigned_at) : 'N/A'
+        };
+      });
+      setTasksToApprove(tasks);
+
+      // Lista de dispositivos registrados
+      setDevicesList(devs.slice(0, 5).map(d => ({
+        id: d.id,
+        name: d.name || 'Dispositivo Kiosko',
+        device_code: d.device_code,
+        active: d.active
+      })));
+
+    } catch (err) {
+      console.error("Error loading dashboard data", err);
+    } finally {
+      setLoading(false);
     }
+  }
+
+  useEffect(() => {
     loadDashboardData();
   }, []);
 
   if (loading) {
     return (
-      <div style={{ padding: '40px', textAlign: 'center', color: '#64748b' }}>
-        <strong>Cargando resumen operacional...</strong>
+      <div style={{ padding: '80px 40px', textAlign: 'center', color: '#64748b', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+        <RefreshCw size={24} className="animate-spin" style={{ color: '#475569' }} />
+        <strong>Cargando panel operacional...</strong>
       </div>
     );
   }
 
   return (
     <>
-      <Header title="Dashboard" subtitle={`Consola de control de ${user.name}`} />
+      <Header title="Dashboard" subtitle={`Consola de control operativo · ${user.name}`} />
       
-      {/* Tarjetas de Métricas */}
-      <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '16px', marginBottom: '24px' }}>
-        <div className="metric" style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '4px', boxShadow: '0 4px 10px rgba(0,0,0,0.02)' }}>
-          <strong style={{ fontSize: '32px', color: '#2f7dd1' }}>{metrics.totalEmployees}</strong>
-          <span style={{ color: '#64748b', fontSize: '13px', fontWeight: 'bold' }}>Colaboradores Registrados</span>
+      {/* Grid de Métricas Operacionales */}
+      <div className="dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', marginBottom: '28px' }}>
+        
+        {/* Card 1: Colaboradores */}
+        <div style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '24px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '136px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.01), 0 2px 4px -1px rgba(0,0,0,0.01)', transition: 'transform 0.2s', cursor: 'pointer' }} onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <span style={{ color: '#64748b', fontSize: '13px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Colaboradores</span>
+            <UsersRound size={20} style={{ color: '#64748b' }} />
+          </div>
+          <div>
+            <strong style={{ fontSize: '36px', fontWeight: '800', color: '#0f172a', lineHeight: '1' }}>{metrics.totalEmployees}</strong>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '6px', fontSize: '12px', color: '#64748b' }}>
+              <span>{metrics.activeEmployees} activos</span>
+              <span>•</span>
+              <span>{metrics.totalEmployees - metrics.activeEmployees} de baja</span>
+            </div>
+          </div>
         </div>
-        <div className="metric" style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '4px', boxShadow: '0 4px 10px rgba(0,0,0,0.02)' }}>
-          <strong style={{ fontSize: '32px', color: '#10b981' }}>{metrics.activeShifts}</strong>
-          <span style={{ color: '#64748b', fontSize: '13px', fontWeight: 'bold' }}>Jornadas Activas Hoy</span>
+
+        {/* Card 2: Control de Asistencia */}
+        <div style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '24px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '136px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.01), 0 2px 4px -1px rgba(0,0,0,0.01)', transition: 'transform 0.2s', cursor: 'pointer' }} onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <span style={{ color: '#64748b', fontSize: '13px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Presencia Hoy</span>
+            <CalendarClock size={20} style={{ color: '#64748b' }} />
+          </div>
+          <div>
+            <strong style={{ fontSize: '36px', fontWeight: '800', color: '#0f172a', lineHeight: '1' }}>{metrics.activeShifts}</strong>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '6px', fontSize: '12px', color: '#64748b' }}>
+              <span style={{ color: '#10b981', fontWeight: '600' }}>{metrics.activeShifts} laborando</span>
+              <span>•</span>
+              <span>{metrics.closedShiftsToday} salidas</span>
+            </div>
+          </div>
         </div>
-        <div className="metric" style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '4px', boxShadow: '0 4px 10px rgba(0,0,0,0.02)' }}>
-          <strong style={{ fontSize: '32px', color: metrics.pendingTasks > 0 ? '#f59e0b' : '#64748b' }}>{metrics.pendingTasks}</strong>
-          <span style={{ color: '#64748b', fontSize: '13px', fontWeight: 'bold' }}>Tareas por Validar</span>
+
+        {/* Card 3: Tareas y Aprobaciones */}
+        <div style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '24px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '136px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.01), 0 2px 4px -1px rgba(0,0,0,0.01)', transition: 'transform 0.2s', cursor: 'pointer' }} onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <span style={{ color: '#64748b', fontSize: '13px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Tareas de Cumplimiento</span>
+            <ListChecks size={20} style={{ color: '#64748b' }} />
+          </div>
+          <div>
+            <strong style={{ fontSize: '36px', fontWeight: '800', color: metrics.pendingTasks > 0 ? '#f59e0b' : '#0f172a', lineHeight: '1' }}>{metrics.pendingTasks}</strong>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '6px', fontSize: '12px', color: '#64748b' }}>
+              <span style={{ color: metrics.pendingTasks > 0 ? '#d97706' : '#64748b', fontWeight: metrics.pendingTasks > 0 ? '600' : 'normal' }}>{metrics.pendingTasks} por validar</span>
+              <span>•</span>
+              <span>{metrics.completedTasks} completadas</span>
+            </div>
+          </div>
         </div>
-        <div className="metric" style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '4px', boxShadow: '0 4px 10px rgba(0,0,0,0.02)' }}>
-          <strong style={{ fontSize: '32px', color: '#6366f1' }}>{metrics.totalDevices}</strong>
-          <span style={{ color: '#64748b', fontSize: '13px', fontWeight: 'bold' }}>Dispositivos Kiosko</span>
+
+        {/* Card 4: Seguridad Biométrica */}
+        <div style={{ background: 'white', border: '1px solid #e2e8f0', borderRadius: '16px', padding: '24px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '136px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.01), 0 2px 4px -1px rgba(0,0,0,0.01)', transition: 'transform 0.2s', cursor: 'pointer' }} onMouseEnter={(e) => e.currentTarget.style.transform = 'translateY(-2px)'} onMouseLeave={(e) => e.currentTarget.style.transform = 'translateY(0)'}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <span style={{ color: '#64748b', fontSize: '13px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Cobertura Face ID</span>
+            <ScanFace size={20} style={{ color: '#64748b' }} />
+          </div>
+          <div>
+            <strong style={{ fontSize: '36px', fontWeight: '800', color: '#0f172a', lineHeight: '1' }}>
+              {metrics.totalEmployees > 0 ? Math.round((metrics.employeesWithFaceId / metrics.totalEmployees) * 100) : 0}%
+            </strong>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '6px', fontSize: '12px', color: '#64748b' }}>
+              <span>{metrics.employeesWithFaceId} rostros vinculados</span>
+            </div>
+          </div>
         </div>
+
       </div>
 
-      {/* Contenido Operacional */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' }}>
+      {/* Contenido Operativo */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(360px, 1fr))', gap: '20px', marginBottom: '24px' }}>
         
-        {/* Colaboradores Activos */}
-        <div className="panel" style={{ borderRadius: '16px', background: 'white', border: '1px solid #e2e8f0', padding: '20px' }}>
-          <h3 style={{ fontSize: '15px', margin: '0 0 16px 0', borderBottom: '1px solid #f1f5f9', paddingBottom: '10px', color: '#1e293b', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Users size={16} style={{ color: '#10b981' }} /> Trabajando Actualmente ({activeWorkers.length})
-          </h3>
-          <div style={{ display: 'grid', gap: '10px' }}>
+        {/* Colaboradores Activos en Sucursales */}
+        <section className="panel" style={{ borderRadius: '16px', background: 'white', border: '1px solid #e2e8f0', padding: '24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px' }}>
+            <h3 style={{ fontSize: '15px', margin: '0', color: '#0f172a', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Users size={16} style={{ color: '#475569' }} /> Colaboradores Laborando Hoy ({activeWorkers.length})
+            </h3>
+            <button className="ghost" type="button" onClick={loadDashboardData} style={{ minHeight: '28px', height: '28px', padding: '0 8px', fontSize: '11px' }}>
+              <RefreshCw size={11} /> Actualizar
+            </button>
+          </div>
+          <div style={{ display: 'grid', gap: '10px', maxH: '320px', overflowY: 'auto' }}>
             {activeWorkers.map(w => (
-              <div key={w.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#f8fafc', borderRadius: '8px', fontSize: '13px' }}>
-                <strong>{w.name}</strong>
-                <span style={{ color: '#64748b' }}>Entró: {w.time}</span>
+              <div key={w.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: '#f8fafc', borderRadius: '10px', border: '1px solid #f1f5f9' }}>
+                <div>
+                  <strong style={{ fontSize: '13px', color: '#0f172a', display: 'block' }}>{w.name}</strong>
+                  <span style={{ fontSize: '11px', color: '#64748b' }}>{w.branch}</span>
+                </div>
+                <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'end' }}>
+                  <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569' }}>Entrada: {w.time}</span>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: '10px', color: w.faceRegistered ? '#059669' : '#475569', fontWeight: '600' }}>
+                    <ScanFace size={10} /> {w.faceRegistered ? 'Con Face ID' : 'Ingreso PIN'}
+                  </span>
+                </div>
               </div>
             ))}
             {activeWorkers.length === 0 && (
-              <div style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '13px' }}>
-                No hay jornadas activas registradas en este momento.
+              <div style={{ padding: '32px', textAlign: 'center', color: '#94a3b8', fontSize: '13px' }}>
+                No hay colaboraciones activas en este momento.
               </div>
             )}
           </div>
-        </div>
+        </section>
 
-        {/* Tareas por Validar */}
-        <div className="panel" style={{ borderRadius: '16px', background: 'white', border: '1px solid #e2e8f0', padding: '20px' }}>
-          <h3 style={{ fontSize: '15px', margin: '0 0 16px 0', borderBottom: '1px solid #f1f5f9', paddingBottom: '10px', color: '#1e293b', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <TriangleAlert size={16} style={{ color: '#f59e0b' }} /> Tareas Pendientes de Aprobación ({tasksToApprove.length})
-          </h3>
+        {/* Tareas que Requieren Validación */}
+        <section className="panel" style={{ borderRadius: '16px', background: 'white', border: '1px solid #e2e8f0', padding: '24px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px' }}>
+            <h3 style={{ fontSize: '15px', margin: '0', color: '#0f172a', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <TriangleAlert size={16} style={{ color: '#475569' }} /> Validaciones Pendientes ({tasksToApprove.length})
+            </h3>
+          </div>
           <div style={{ display: 'grid', gap: '10px' }}>
             {tasksToApprove.map(t => (
-              <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '8px', fontSize: '13px' }}>
+              <div key={t.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: '10px' }}>
                 <div>
-                  <strong>{t.employeeName}</strong>
-                  <span style={{ display: 'block', fontSize: '11px', color: '#b45309' }}>Plantilla de Tarea #{t.templateId}</span>
+                  <strong style={{ fontSize: '13px', color: '#78350f', display: 'block' }}>{t.employeeName}</strong>
+                  <span style={{ display: 'block', fontSize: '11px', color: '#b45309' }}>{t.templateName}</span>
                 </div>
-                <span className="badge" style={{ background: '#fef3c7', color: '#b45309', fontWeight: 'bold', fontSize: '11px' }}>Por Validar</span>
+                <div style={{ textAlign: 'right' }}>
+                  <span style={{ fontSize: '11px', color: '#b45309', display: 'block', marginBottom: '2px' }}>Asignado: {t.date}</span>
+                  <span style={{ background: '#fef3c7', color: '#b45309', fontWeight: 'bold', fontSize: '10px', padding: '2px 6px', borderRadius: '4px', display: 'inline-block' }}>Esperando Firma</span>
+                </div>
               </div>
             ))}
             {tasksToApprove.length === 0 && (
-              <div style={{ padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '13px' }}>
-                No hay tareas pendientes de validación por gerentes.
+              <div style={{ padding: '32px', textAlign: 'center', color: '#94a3b8', fontSize: '13px' }}>
+                ¡Excelente! No hay tareas pendientes de validación por gerentes.
               </div>
             )}
           </div>
-        </div>
+        </section>
 
       </div>
+
+      {/* Tercer Fila: Kioskos y Dispositivos */}
+      <section className="panel" style={{ borderRadius: '16px', background: 'white', border: '1px solid #e2e8f0', padding: '24px' }}>
+        <h3 style={{ fontSize: '15px', margin: '0 0 16px 0', borderBottom: '1px solid #f1f5f9', paddingBottom: '12px', color: '#0f172a', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <MonitorSmartphone size={16} style={{ color: '#475569' }} /> Terminales Kiosko Registradas ({metrics.totalDevices})
+        </h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '16px' }}>
+          {devicesList.map(d => (
+            <div key={d.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+              <div>
+                <strong style={{ fontSize: '14px', color: '#0f172a', display: 'block' }}>{d.name}</strong>
+                <code style={{ fontSize: '11px', color: '#64748b' }}>{d.device_code}</code>
+              </div>
+              <span style={{ 
+                display: 'inline-flex', 
+                alignItems: 'center', 
+                gap: '4px', 
+                fontSize: '11px', 
+                fontWeight: 'bold', 
+                color: d.active ? '#059669' : '#ef4444' 
+              }}>
+                <Circle size={6} fill={d.active ? '#10b981' : '#ef4444'} stroke="none" />
+                {d.active ? 'Activo' : 'Inactivo'}
+              </span>
+            </div>
+          ))}
+          {devicesList.length === 0 && (
+            <div style={{ colSpan: 3, padding: '20px', textAlign: 'center', color: '#94a3b8', fontSize: '13px' }}>
+              No se han registrado dispositivos kiosko en la base de datos.
+            </div>
+          )}
+        </div>
+      </section>
     </>
   );
 }
@@ -1219,7 +1346,14 @@ function KioskScreen() {
   const [showConfig, setShowConfig] = useState(false);
   const [tempDeviceCode, setTempDeviceCode] = useState(deviceCode);
 
-  const [loginMethod, setLoginMethod] = useState<'pin' | 'manager_override'>('pin');
+  const [loginMethod, setLoginMethod] = useState<'face' | 'pin' | 'manager_override'>('face');
+  const [authMethodUsed, setAuthMethodUsed] = useState<'pin' | 'face_id'>('pin');
+  const [cameraActive, setCameraActive] = useState(true);
+  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [regStep, setRegStep] = useState(0);
+  const [regImages, setRegImages] = useState<string[]>([]);
+  const [employeeNeedsFaceRegistration, setEmployeeNeedsFaceRegistration] = useState(false);
+
   const [managerPin, setManagerPin] = useState('');
   const [employeePin, setEmployeePin] = useState('');
 
@@ -1239,6 +1373,39 @@ function KioskScreen() {
       setLockedEmployeeName(localStorage.getItem('kiosk_locked_employee_name'));
     }
   }, [isLockEnabled]);
+
+  // Manejo de la cámara en vivo
+  useEffect(() => {
+    const shouldBeActive = (loginMethod === 'face' && !employee && cameraActive) || (employee && employeeNeedsFaceRegistration && cameraActive);
+    if (shouldBeActive) {
+      navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 320 } })
+        .then((s) => {
+          setStream(s);
+          const videoId = employee ? 'kiosk-register-webcam' : 'kiosk-webcam';
+          setTimeout(() => {
+            const videoElement = document.getElementById(videoId) as HTMLVideoElement;
+            if (videoElement) {
+              videoElement.srcObject = s;
+            }
+          }, 100);
+        })
+        .catch((err) => {
+          console.error("No se pudo iniciar la camara:", err);
+          setError("No se pudo acceder a la cámara.");
+          setCameraActive(false);
+        });
+    } else {
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+        setStream(null);
+      }
+    }
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, [loginMethod, employee, employeeNeedsFaceRegistration, cameraActive]);
 
   // Reloj en vivo — actualiza cada segundo en zona horaria El Salvador
   const [now, setNow] = useState(new Date());
@@ -1265,7 +1432,7 @@ function KioskScreen() {
     setMessage('');
     try {
       await api.request(`/kiosk/${encodeURIComponent(deviceCode)}/config`);
-      const data = await api.request<{ employee: Record<string, unknown>; access_token?: string }>('/kiosk/identify-pin', {
+      const data = await api.request<{ employee: Record<string, unknown> & { has_face_template?: boolean }; access_token?: string }>('/kiosk/identify-pin', {
         method: 'POST',
         body: JSON.stringify({ device_code: deviceCode, pin }),
       });
@@ -1294,15 +1461,149 @@ function KioskScreen() {
       if (data.access_token) {
         api.setToken(data.access_token);
       }
+
+      setAuthMethodUsed('pin');
       setEmployee(emp);
       setPin('');
-      await loadEvents(Number(emp.id));
-      await loadAssignments(Number(emp.id));
+
+      if (!emp.has_face_template) {
+        setEmployeeNeedsFaceRegistration(true);
+        setCameraActive(true);
+        setMessage("Primera vez detectada. Por favor, registra tu rostro para futuros accesos.");
+      } else {
+        setEmployeeNeedsFaceRegistration(false);
+        setCameraActive(false);
+        await loadEvents(Number(emp.id));
+        await loadAssignments(Number(emp.id));
+      }
     } catch (err) {
       setEmployee(null);
       setEvents([]);
       setAssignments([]);
       setError(err instanceof Error ? err.message : 'No se pudo identificar');
+    }
+  }
+
+  async function identifyFace() {
+    setError('');
+    setMessage('');
+    let base64Image = '';
+    
+    if (cameraActive && stream) {
+      const videoElement = document.getElementById('kiosk-webcam') as HTMLVideoElement;
+      if (videoElement) {
+        const canvas = document.createElement('canvas');
+        canvas.width = videoElement.videoWidth || 320;
+        canvas.height = videoElement.videoHeight || 320;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+          base64Image = canvas.toDataURL('image/jpeg', 0.8);
+        }
+      }
+    }
+    
+    if (!base64Image) {
+      setError("No se pudo capturar la imagen de la cámara. Inténtalo de nuevo.");
+      return;
+    }
+    
+    try {
+      await api.request(`/kiosk/${encodeURIComponent(deviceCode)}/config`);
+      const data = await api.request<{ 
+        success: boolean; 
+        employee_id?: number; 
+        employee_name?: string; 
+        confidence_score?: number; 
+        access_token?: string; 
+        employee?: Record<string, unknown>;
+      }>('/kiosk/identify-face', {
+        method: 'POST',
+        body: JSON.stringify({ image_base64: base64Image, device_code: deviceCode }),
+      });
+      
+      if (!data.success) {
+        throw new Error(`Identificación fallida. Rostro no coincide con ningún colaborador.`);
+      }
+      
+      if (data.access_token && data.employee) {
+        const emp = data.employee;
+        if (isLockEnabled) {
+          const curLockedId = localStorage.getItem('kiosk_locked_employee_id');
+          if (curLockedId && String(emp.id) !== curLockedId) {
+            throw new Error(`Este dispositivo móvil está registrado a nombre de: ${localStorage.getItem('kiosk_locked_employee_name') || 'otro colaborador'}. Solo esa persona puede marcar asistencia aquí.`);
+          }
+          if (!curLockedId) {
+            localStorage.setItem('kiosk_locked_employee_id', String(emp.id));
+            localStorage.setItem('kiosk_locked_employee_name', String(emp.name));
+            setLockedEmployeeId(String(emp.id));
+            setLockedEmployeeName(String(emp.name));
+          }
+        }
+
+        api.setToken(data.access_token);
+        setEmployee(emp);
+        setAuthMethodUsed('face_id');
+        setEmployeeNeedsFaceRegistration(false);
+        await loadEvents(Number(emp.id));
+        await loadAssignments(Number(emp.id));
+        setMessage(`Identificado como ${emp.name} con éxito (Confianza: ${data.confidence_score?.toFixed(2) ?? 0})`);
+        setCameraActive(false);
+      } else {
+        throw new Error("No se recibió el token de acceso.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo identificar por rostro');
+    }
+  }
+
+  async function registerEmployeeFace() {
+    if (!employee) return;
+    setError('');
+    setMessage('');
+    
+    let base64Image = '';
+    if (cameraActive && stream) {
+      const videoElement = document.getElementById('kiosk-register-webcam') as HTMLVideoElement;
+      if (videoElement) {
+        const canvas = document.createElement('canvas');
+        canvas.width = 320;
+        canvas.height = 320;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+          base64Image = canvas.toDataURL('image/jpeg', 0.8);
+        }
+      }
+    }
+
+    if (!base64Image) {
+      setError("No se pudo capturar la imagen. Enciende la cámara.");
+      return;
+    }
+
+    if (regStep < 2) {
+      setRegImages([...regImages, base64Image]);
+      setRegStep(regStep + 1);
+      setMessage(`Paso ${regStep === 0 ? "Frente" : "Izquierda"} capturado con éxito.`);
+    } else {
+      const allImages = [...regImages, base64Image];
+      try {
+        await api.request(`/employees/${employee.id}/register-face`, {
+          method: 'POST',
+          body: JSON.stringify({ images: allImages, device_code: deviceCode }),
+        });
+        
+        await loadEvents(Number(employee.id));
+        await loadAssignments(Number(employee.id));
+        setEmployeeNeedsFaceRegistration(false);
+        setMessage('Registro multi-ángulo completado. ¡Sesión iniciada con éxito!');
+        setCameraActive(false);
+        setRegStep(0);
+        setRegImages([]);
+      } catch (err: any) {
+        setError(err.message || 'No se pudo completar el registro facial');
+      }
     }
   }
 
@@ -1317,11 +1618,8 @@ function KioskScreen() {
         body: JSON.stringify({ device_code: deviceCode, employee_pin: employeePin, manager_pin: managerPin }),
       });
       
-      
       const emp = data.employee;
       // El PIN de Gerente permite autorizar el ingreso de cualquier empleado en este dispositivo, saltando el bloqueo local.
-      // No modificamos ni bloqueamos el dispositivo a este usuario si ya está registrado a nombre de otro.
-
       if (data.access_token) {
         api.setToken(data.access_token);
       }
@@ -1369,7 +1667,10 @@ function KioskScreen() {
     setPin('');
     setManagerPin('');
     setEmployeePin('');
-    setLoginMethod('pin');
+    setAuthMethodUsed('pin');
+    setEmployeeNeedsFaceRegistration(false);
+    setLoginMethod('face');
+    setCameraActive(true);
   }
 
   async function register(eventTypeId: number) {
@@ -1383,7 +1684,7 @@ function KioskScreen() {
           employee_id: Number(employee.id), 
           event_type_id: eventTypeId, 
           device_code: deviceCode,
-          method: loginMethod
+          method: authMethodUsed
         }),
       });
       setMessage('Evento registrado con éxito');
@@ -1411,6 +1712,15 @@ function KioskScreen() {
       setError(err instanceof Error ? err.message : 'No se pudo completar la asignación');
     }
   }
+
+  // Auto-escanear rostro cada 2.5 segundos cuando la cámara está activa en login de rostro
+  useEffect(() => {
+    if (loginMethod !== 'face' || employee || !cameraActive || !stream) return;
+    const interval = setInterval(() => {
+      identifyFace();
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [loginMethod, employee, cameraActive, stream]);
 
   if (!employee) {
     return (
@@ -1483,6 +1793,93 @@ function KioskScreen() {
             </div>
           )}
 
+          {error && <div className="error" style={{ fontSize: '13px', margin: '0 0 16px 0' }}>{error}</div>}
+          {message && <div className="badge" style={{ margin: '0 0 16px 0', display: 'flex', justifyContent: 'center', padding: '6px' }}>{message}</div>}
+
+          {loginMethod === 'face' && (
+            <div style={{ display: 'grid', gap: '16px', textAlign: 'center' }}>
+              {isLockEnabled && lockedEmployeeId && (
+                <div style={{ background: '#fef2f2', border: '1px solid #fee2e2', padding: '10px', borderRadius: '12px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#b91c1c', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center', textTransform: 'uppercase', letterSpacing: '0.5px' }}><Lock size={11} /> Dispositivo Vinculado</span>
+                  <strong style={{ display: 'block', fontSize: '13px', color: '#991b1b', marginTop: '2px' }}>Solo {lockedEmployeeName}</strong>
+                </div>
+              )}
+
+              <span style={{ fontSize: '14px', color: '#475569', fontWeight: 'bold' }}>Reconocimiento Facial Activo</span>
+              
+              <div style={{ display: 'flex', justifyContent: 'center', position: 'relative' }}>
+                <div style={{ width: '220px', height: '220px', borderRadius: '50%', overflow: 'hidden', border: '4px solid #3b82f6', background: '#000', position: 'relative' }}>
+                  {cameraActive ? (
+                    <video 
+                      id="kiosk-webcam" 
+                      autoPlay 
+                      playsInline 
+                      muted 
+                      style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                    />
+                  ) : (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94a3b8' }}>
+                      Cámara desactivada
+                    </div>
+                  )}
+                  {/* Escáner de luz de Face ID */}
+                  <div style={{
+                    position: 'absolute',
+                    top: '0',
+                    left: '0',
+                    width: '100%',
+                    height: '4px',
+                    background: 'rgba(59, 130, 246, 0.7)',
+                    boxShadow: '0 0 8px #3b82f6',
+                    animation: 'scan 2s infinite ease-in-out'
+                  }} />
+                </div>
+              </div>
+
+              <style>{`
+                @keyframes scan {
+                  0% { top: 0%; }
+                  50% { top: 100%; }
+                  100% { top: 0%; }
+                }
+              `}</style>
+
+              <button 
+                className="primary" 
+                type="button" 
+                onClick={identifyFace} 
+                style={{ minHeight: '48px', fontSize: '16px', borderRadius: '12px', fontWeight: 'bold' }}
+              >
+                <ScanFace size={20} /> Escanear mi Rostro
+              </button>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <button 
+                  type="button" 
+                  className="ghost" 
+                  onClick={() => {
+                    setLoginMethod('pin');
+                    setCameraActive(false);
+                  }}
+                  style={{ minHeight: '44px', borderRadius: '12px', fontWeight: 'bold', fontSize: '13px' }}
+                >
+                  Primera vez / PIN
+                </button>
+                <button 
+                  type="button" 
+                  className="ghost" 
+                  onClick={() => {
+                    setLoginMethod('manager_override');
+                    setCameraActive(false);
+                  }}
+                  style={{ minHeight: '44px', borderRadius: '12px', fontWeight: 'bold', fontSize: '13px' }}
+                >
+                  PIN Gerente
+                </button>
+              </div>
+            </div>
+          )}
+
           {loginMethod === 'pin' && (
             <form className="login-form" onSubmit={identify} style={{ marginTop: '0', display: 'grid', gap: '16px' }}>
               {isLockEnabled && lockedEmployeeId && (
@@ -1508,9 +1905,6 @@ function KioskScreen() {
                 </div>
               )}
 
-              {error && <div className="error" style={{ fontSize: '13px', margin: '0' }}>{error}</div>}
-              {message && <div className="badge" style={{ margin: '0', display: 'flex', justifyContent: 'center', padding: '6px' }}>{message}</div>}
-              
               <label className="field" style={{ textAlign: 'center', gap: '8px', display: 'grid' }}>
                 <span style={{ fontSize: '14px', color: '#475569', fontWeight: 'bold' }}>Ingresa tu PIN</span>
                 <input 
@@ -1541,22 +1935,32 @@ function KioskScreen() {
                 <KeyRound size={20} /> Autenticar PIN
               </button>
 
-              <button 
-                type="button" 
-                className="ghost" 
-                onClick={() => setLoginMethod('manager_override')}
-                style={{ width: '100%', minHeight: '44px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 'bold' }}
-              >
-                Autorización de Gerente
-              </button>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <button 
+                  type="button" 
+                  className="ghost" 
+                  onClick={() => {
+                    setLoginMethod('face');
+                    setCameraActive(true);
+                  }}
+                  style={{ minHeight: '44px', borderRadius: '12px', fontWeight: 'bold', fontSize: '13px' }}
+                >
+                  <ScanFace size={16} /> Usar Face ID
+                </button>
+                <button 
+                  type="button" 
+                  className="ghost" 
+                  onClick={() => setLoginMethod('manager_override')}
+                  style={{ minHeight: '44px', borderRadius: '12px', fontWeight: 'bold', fontSize: '13px' }}
+                >
+                  PIN Gerente
+                </button>
+              </div>
             </form>
           )}
 
           {loginMethod === 'manager_override' && (
             <form className="login-form" onSubmit={identifyManagerOverride} style={{ marginTop: '0', display: 'grid', gap: '16px' }}>
-              {error && <div className="error" style={{ fontSize: '13px', margin: '0' }}>{error}</div>}
-              {message && <div className="badge" style={{ margin: '0', display: 'flex', justifyContent: 'center', padding: '6px' }}>{message}</div>}
-              
               <span style={{ fontSize: '14px', color: '#475569', fontWeight: 'bold', textAlign: 'center' }}>Autorización de Gerente</span>
               
               <label className="field">
@@ -1592,10 +1996,13 @@ function KioskScreen() {
               <button 
                 type="button" 
                 className="ghost" 
-                onClick={() => setLoginMethod('pin')}
+                onClick={() => {
+                  setLoginMethod('face');
+                  setCameraActive(true);
+                }}
                 style={{ width: '100%', minHeight: '44px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontWeight: 'bold' }}
               >
-                Volver a Ingresar PIN de Empleado
+                Volver a Reconocimiento Facial
               </button>
             </form>
           )}
@@ -1604,7 +2011,79 @@ function KioskScreen() {
     );
   }
 
-  // (Registro biométrico multi-ángulo eliminado)
+  // Registro biométrico multi-ángulo en pantalla de Kiosko
+  if (employee && employeeNeedsFaceRegistration) {
+    const stepInstructions = [
+      "Mira fijamente a la cámara de Frente.",
+      "Gira levemente la cabeza hacia la Izquierda (Perfil).",
+      "Gira levemente la cabeza hacia la Derecha (Perfil)."
+    ];
+    return (
+      <div className="login-page" style={{ minHeight: '80vh', background: 'transparent', padding: '0', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="login-box" style={{ width: '100%', maxWidth: '420px', border: '1px solid #dce3ea', borderRadius: '16px', padding: '24px', background: 'white', textAlign: 'center' }}>
+          <strong style={{ fontSize: '16px', display: 'block', color: '#0f172a' }}>Registro de Rostro para Face ID</strong>
+          <span style={{ fontSize: '13px', color: '#64748b', display: 'block', marginTop: '4px' }}>{employee.name}</span>
+
+          <div style={{ display: 'flex', justifyContent: 'center', margin: '20px 0' }}>
+            <div style={{ width: '200px', height: '200px', borderRadius: '50%', overflow: 'hidden', border: '4px solid #10b981', background: '#000', position: 'relative' }}>
+              {cameraActive ? (
+                <video 
+                  id="kiosk-register-webcam" 
+                  autoPlay 
+                  playsInline 
+                  muted 
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                />
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#94a3b8' }}>
+                  Cargando cámara...
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div style={{ marginBottom: '20px' }}>
+            <span style={{ 
+              display: 'inline-block', 
+              padding: '4px 10px', 
+              background: '#ecfdf5', 
+              color: '#059669', 
+              borderRadius: '20px', 
+              fontSize: '12px', 
+              fontWeight: 'bold' 
+            }}>
+              Paso {regStep + 1} de 3
+            </span>
+            <p style={{ fontSize: '14px', color: '#1e293b', fontWeight: '600', marginTop: '8px', minHeight: '40px' }}>
+              {stepInstructions[regStep]}
+            </p>
+          </div>
+
+          {error && <div className="error" style={{ fontSize: '13px', marginBottom: '12px' }}>{error}</div>}
+          {message && <div className="badge" style={{ marginBottom: '12px', display: 'block' }}>{message}</div>}
+
+          <div style={{ display: 'grid', gap: '8px' }}>
+            <button 
+              className="primary" 
+              type="button" 
+              onClick={registerEmployeeFace} 
+              style={{ minHeight: '46px', borderRadius: '12px', fontWeight: 'bold' }}
+            >
+              Capturar Foto {regStep + 1}
+            </button>
+            <button 
+              className="ghost" 
+              type="button" 
+              onClick={logoutEmployee} 
+              style={{ minHeight: '44px', borderRadius: '12px' }}
+            >
+              Cancelar Registro
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const inJornadaActiva = events.some(e => e.code === 'break_out' || e.code === 'meal_out' || e.code === 'shift_out');
   const hasShiftIn = events.some(e => e.opens_shift);
@@ -2173,6 +2652,32 @@ function FormGrid({ fields, payload, setPayload }: { fields: Field[]; payload: R
             <textarea value={String(payload[field.name] ?? '')} onChange={(event) => setPayload({ ...payload, [field.name]: event.target.value })} />
           ) : field.type === 'checkbox' ? (
             <input type="checkbox" checked={Boolean(payload[field.name])} onChange={(event) => setPayload({ ...payload, [field.name]: event.target.checked })} />
+          ) : field.type === 'image_preview' ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', background: '#f8fafc', padding: '10px', borderRadius: '10px', border: '1px solid #e2e8f0', minHeight: '60px', width: '100%' }}>
+              {payload[field.name] ? (
+                <>
+                  <img src={String(payload[field.name])} alt="Face ID Base" style={{ width: '60px', height: '60px', borderRadius: '50%', objectFit: 'cover', border: '2px solid #2f7dd1' }} />
+                  <button type="button" className="ghost" onClick={async () => {
+                    if (!payload.id) return;
+                    if (window.confirm("¿Seguro que deseas eliminar la foto base de Face ID de este empleado? El empleado tendrá que volver a registrarse con su PIN en el Kiosko.")) {
+                      try {
+                        await api.request(`/employees/${payload.id}/face`, { method: 'DELETE' });
+                        setPayload({ ...payload, face_image: null });
+                        alert("Foto eliminada con éxito.");
+                      } catch (err) {
+                        alert("No se pudo eliminar la foto.");
+                      }
+                    }
+                  }} style={{ color: '#ef4444', borderColor: '#fee2e2', background: '#fef2f2', padding: '4px 10px', fontSize: '12px', minHeight: '30px' }}>
+                    Eliminar Foto
+                  </button>
+                </>
+              ) : (
+                <span style={{ color: '#64748b', fontSize: '12px', fontStyle: 'italic' }}>
+                  Sin foto Face ID (se le pedirá PIN para registrarla en Kiosko)
+                </span>
+              )}
+            </div>
           ) : (
             <input type={field.type ?? 'text'} required={field.required} value={String(payload[field.name] ?? '')} onChange={(event) => setPayload({ ...payload, [field.name]: event.target.value })} />
           )}
@@ -2185,6 +2690,9 @@ function FormGrid({ fields, payload, setPayload }: { fields: Field[]; payload: R
 function renderValue(value: unknown) {
   if (typeof value === 'boolean') return value ? <span className="badge">Si</span> : 'No';
   if (value === null || value === undefined || value === '') return '-';
+  if (typeof value === 'string' && value.startsWith('data:image/')) {
+    return <img src={value} alt="Foto Face ID" style={{ width: '38px', height: '38px', objectFit: 'cover', borderRadius: '50%', border: '2px solid #2f7dd1' }} />;
+  }
   return String(value);
 }
 
