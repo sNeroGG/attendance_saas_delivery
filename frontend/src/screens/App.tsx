@@ -4,6 +4,9 @@ import {
   BadgeCheck,
   CalendarClock,
   CalendarX,
+  ChevronDown,
+  ChevronRight,
+  Circle,
   ClipboardList,
   ListChecks,
   BriefcaseBusiness,
@@ -12,6 +15,7 @@ import {
   DoorOpen,
   KeyRound,
   LayoutDashboard,
+  Lock,
   LogOut,
   MapPin,
   MonitorSmartphone,
@@ -19,7 +23,9 @@ import {
   Save,
   Settings,
   ShieldCheck,
+  TriangleAlert,
   UserRound,
+  Users,
   UsersRound,
 } from 'lucide-react';
 import { ApiUser, api } from '../api/client';
@@ -302,6 +308,33 @@ const tableScreens = [
   { key: 'audit-logs', title: 'Auditoria', endpoint: '/audit-logs', columns: ['id', 'action', 'model_name', 'record_id', 'employee_id', 'timestamp'] },
 ];
 
+// Zona horaria de El Salvador (UTC-6, sin horario de verano)
+const SV_LOCALE = 'es-SV';
+const SV_TZ = 'America/El_Salvador';
+
+/**
+ * El backend devuelve datetimes sin sufijo de zona (ej. '2026-07-15T17:00:21').
+ * JavaScript los trata como hora local del navegador en lugar de UTC,
+ * lo que produce desfases. Forzamos 'Z' para asegurar la lectura en UTC.
+ */
+function toUTC(value: string): Date {
+  // Si ya tiene Z, +HH:MM o -HH:MM al final, respetar tal cual
+  const hasZone = /[Zz]$|[+-]\d{2}:\d{2}$/.test(value);
+  return new Date(hasZone ? value : value + 'Z');
+}
+
+/** Fecha + hora en zona horaria de El Salvador */
+function fmtSV(value: string | null | undefined): string {
+  if (!value) return '-';
+  return toUTC(value).toLocaleString(SV_LOCALE, { timeZone: SV_TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
+/** Solo hora en zona horaria de El Salvador */
+function fmtTimeSV(value: string | null | undefined): string {
+  if (!value) return 'N/A';
+  return toUTC(value).toLocaleTimeString(SV_LOCALE, { timeZone: SV_TZ, hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
 function blankPayload(fields: Field[], itemsLength = 0) {
   const payload = Object.fromEntries(fields.map((field) => [field.name, field.type === 'checkbox' ? true : '']));
   if (fields.some(f => f.name === 'employee_code')) {
@@ -424,7 +457,7 @@ function Dashboard({ user }: { user: ApiUser }) {
         // Resolver nombres de trabajadores activos
         const workers = activeSfts.map(s => {
           const emp = emps.find(e => e.id === s.employee_id);
-          const time = s.check_in_at ? new Date(s.check_in_at).toLocaleTimeString() : 'N/A';
+          const time = s.check_in_at ? fmtTimeSV(s.check_in_at) : 'N/A';
           return {
             id: s.id,
             name: emp ? emp.name : `Empleado #${s.employee_id}`,
@@ -489,8 +522,8 @@ function Dashboard({ user }: { user: ApiUser }) {
         
         {/* Colaboradores Activos */}
         <div className="panel" style={{ borderRadius: '16px', background: 'white', border: '1px solid #e2e8f0', padding: '20px' }}>
-          <h3 style={{ fontSize: '15px', margin: '0 0 16px 0', borderBottom: '1px solid #f1f5f9', paddingBottom: '10px', color: '#1e293b', fontWeight: 'bold' }}>
-            🟢 Trabajando Actualmente ({activeWorkers.length})
+          <h3 style={{ fontSize: '15px', margin: '0 0 16px 0', borderBottom: '1px solid #f1f5f9', paddingBottom: '10px', color: '#1e293b', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Users size={16} style={{ color: '#10b981' }} /> Trabajando Actualmente ({activeWorkers.length})
           </h3>
           <div style={{ display: 'grid', gap: '10px' }}>
             {activeWorkers.map(w => (
@@ -509,8 +542,8 @@ function Dashboard({ user }: { user: ApiUser }) {
 
         {/* Tareas por Validar */}
         <div className="panel" style={{ borderRadius: '16px', background: 'white', border: '1px solid #e2e8f0', padding: '20px' }}>
-          <h3 style={{ fontSize: '15px', margin: '0 0 16px 0', borderBottom: '1px solid #f1f5f9', paddingBottom: '10px', color: '#1e293b', fontWeight: 'bold' }}>
-            ⚠️ Tareas Pendientes de Aprobación ({tasksToApprove.length})
+          <h3 style={{ fontSize: '15px', margin: '0 0 16px 0', borderBottom: '1px solid #f1f5f9', paddingBottom: '10px', color: '#1e293b', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <TriangleAlert size={16} style={{ color: '#f59e0b' }} /> Tareas Pendientes de Aprobación ({tasksToApprove.length})
           </h3>
           <div style={{ display: 'grid', gap: '10px' }}>
             {tasksToApprove.map(t => (
@@ -755,12 +788,16 @@ function ResourceScreen({ config }: { config: ResourceConfig }) {
     }
   }, [success]);
 
+  const [showAdvancedTabs, setShowAdvancedTabs] = useState(false);
+
   const tabs = [
-    { id: 'ficha', label: 'Ficha del Empleado' },
-    { id: 'tareas', label: 'Tareas / Asignaciones' },
-    { id: 'historial', label: 'Historial de Jornadas' },
-    { id: 'auditoria', label: 'Registro de Auditoría' },
+    { id: 'ficha', label: 'Ficha del Empleado', advanced: false },
+    { id: 'tareas', label: 'Tareas / Asignaciones', advanced: false },
+    { id: 'historial', label: 'Historial de Jornadas', advanced: true },
+    { id: 'auditoria', label: 'Registro de Auditoría', advanced: true },
   ];
+
+  const visibleTabs = tabs.filter(t => !t.advanced || showAdvancedTabs);
 
   return (
     <>
@@ -812,8 +849,8 @@ function ResourceScreen({ config }: { config: ResourceConfig }) {
 
           <div style={{ padding: '16px' }}>
             {config.key === 'employees' && editingId !== null && (
-              <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #e2e8f0', marginBottom: '16px', paddingBottom: '4px' }}>
-                {tabs.map((tab) => (
+              <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #e2e8f0', marginBottom: '16px', paddingBottom: '4px', flexWrap: 'wrap', alignItems: 'center' }}>
+                {visibleTabs.map((tab) => (
                   <button
                     key={tab.id}
                     type="button"
@@ -835,6 +872,36 @@ function ResourceScreen({ config }: { config: ResourceConfig }) {
                     {tab.label}
                   </button>
                 ))}
+                {/* Toggle Avanzado */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAdvancedTabs(prev => !prev);
+                    if (showAdvancedTabs && (activeTab === 'historial' || activeTab === 'auditoria')) {
+                      setActiveTab('ficha');
+                    }
+                  }}
+                  style={{
+                    minHeight: '34px',
+                    height: '34px',
+                    fontSize: '12px',
+                    fontWeight: 'bold',
+                    padding: '0 12px',
+                    borderRadius: '6px',
+                    background: showAdvancedTabs ? '#f1f5f9' : 'transparent',
+                    color: showAdvancedTabs ? '#475569' : '#94a3b8',
+                    border: '1px solid #e2e8f0',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                    marginLeft: 'auto',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  {showAdvancedTabs ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  Avanzado
+                </button>
               </div>
             )}
 
@@ -900,9 +967,9 @@ function ResourceScreen({ config }: { config: ResourceConfig }) {
                         <tr key={a.id}>
                           <td style={{ padding: '10px 12px' }}><strong>#{a.id}</strong></td>
                           <td style={{ padding: '10px 12px' }}>{a.template_id}</td>
-                          <td style={{ padding: '10px 12px' }}>{new Date(a.assigned_at).toLocaleString()}</td>
-                          <td style={{ padding: '10px 12px' }}>{a.required ? '✅ Sí' : '❌ No'}</td>
-                          <td style={{ padding: '10px 12px' }}>{a.blocks_check_out ? '✅ Sí' : '❌ No'}</td>
+                          <td style={{ padding: '10px 12px' }}>{fmtSV(a.assigned_at)}</td>
+                          <td style={{ padding: '10px 12px' }}>{a.required ? 'Sí' : 'No'}</td>
+                          <td style={{ padding: '10px 12px' }}>{a.blocks_check_out ? 'Sí' : 'No'}</td>
                           <td style={{ padding: '10px 12px' }}>
                             <span 
                               className="badge" 
@@ -963,8 +1030,8 @@ function ResourceScreen({ config }: { config: ResourceConfig }) {
                     {allShifts.filter(s => Number(s.employee_id) === editingId).map(s => (
                       <tr key={s.id}>
                         <td style={{ padding: '10px 12px' }}><strong>#{s.id}</strong></td>
-                        <td style={{ padding: '10px 12px' }}>{s.check_in_at ? new Date(s.check_in_at).toLocaleString() : '-'}</td>
-                        <td style={{ padding: '10px 12px' }}>{s.check_out_at ? new Date(s.check_out_at).toLocaleString() : '-'}</td>
+                        <td style={{ padding: '10px 12px' }}>{fmtSV(s.check_in_at)}</td>
+                        <td style={{ padding: '10px 12px' }}>{fmtSV(s.check_out_at)}</td>
                         <td style={{ padding: '10px 12px' }}>{s.worked_time_minutes ?? 0} min</td>
                         <td style={{ padding: '10px 12px' }}>{s.break_time_minutes ?? 0} min</td>
                         <td style={{ padding: '10px 12px' }}>{s.meal_time_minutes ?? 0} min</td>
@@ -1011,7 +1078,7 @@ function ResourceScreen({ config }: { config: ResourceConfig }) {
                     {allAuditLogs.filter(l => Number(l.employee_id) === editingId).map(l => (
                       <tr key={l.id}>
                         <td style={{ padding: '10px 12px' }}><strong>#{l.id}</strong></td>
-                        <td style={{ padding: '10px 12px' }}>{new Date(l.timestamp).toLocaleString()}</td>
+                        <td style={{ padding: '10px 12px' }}>{fmtSV(l.timestamp)}</td>
                         <td style={{ padding: '10px 12px' }}><span className="badge" style={{ textTransform: 'uppercase', fontSize: '10px', padding: '2px 6px', borderRadius: '4px' }}>{l.action}</span></td>
                         <td style={{ padding: '10px 12px' }}><code>{l.model_name}</code></td>
                         <td style={{ padding: '10px 12px' }}>ID Registro: {l.record_id}</td>
@@ -1058,7 +1125,7 @@ function ResourceScreen({ config }: { config: ResourceConfig }) {
             <tbody>
               {items.map((item) => (
                 <tr key={String(item.id)}>
-                  {config.columns.map((column) => <td key={column}>{renderValue(item[column])}</td>)}
+                  {config.columns.map((column) => <td key={column}>{renderCell(column, item[column])}</td>)}
                   <td>
                     <button 
                       className="ghost" 
@@ -1131,7 +1198,7 @@ function TableScreen({ config }: { config: { title: string; endpoint: string; co
           <table>
             <thead><tr>{config.columns.map((column) => <th key={column}>{column}</th>)}</tr></thead>
             <tbody>
-              {items.map((item) => <tr key={String(item.id)}>{config.columns.map((column) => <td key={column}>{renderValue(item[column])}</td>)}</tr>)}
+              {items.map((item) => <tr key={String(item.id)}>{config.columns.map((column) => <td key={column}>{renderCell(column, item[column])}</td>)}</tr>)}
               {!items.length && <tr><td colSpan={config.columns.length}>Sin registros</td></tr>}
             </tbody>
           </table>
@@ -1160,6 +1227,28 @@ function KioskScreen() {
   const [lockedEmployeeId, setLockedEmployeeId] = useState<string | null>(localStorage.getItem('kiosk_locked_employee_id'));
   const [lockedEmployeeName, setLockedEmployeeName] = useState<string | null>(localStorage.getItem('kiosk_locked_employee_name'));
 
+  const isLockEnabled = localStorage.getItem('kiosk_device_lock_enabled') !== 'false';
+
+  // Sincronizar el estado de dispositivo vinculado si se apaga globalmente
+  useEffect(() => {
+    if (!isLockEnabled) {
+      setLockedEmployeeId(null);
+      setLockedEmployeeName(null);
+    } else {
+      setLockedEmployeeId(localStorage.getItem('kiosk_locked_employee_id'));
+      setLockedEmployeeName(localStorage.getItem('kiosk_locked_employee_name'));
+    }
+  }, [isLockEnabled]);
+
+  // Reloj en vivo — actualiza cada segundo en zona horaria El Salvador
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const kioskDateStr = now.toLocaleDateString(SV_LOCALE, { timeZone: SV_TZ, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const kioskTimeStr = now.toLocaleTimeString(SV_LOCALE, { timeZone: SV_TZ, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+
   async function loadEvents(employeeId: number) {
     const data = await api.request<Record<string, unknown>[]>(`/kiosk/employees/${employeeId}/available-events?device_code=${encodeURIComponent(deviceCode)}`);
     setEvents(data);
@@ -1182,16 +1271,24 @@ function KioskScreen() {
       });
       
       const emp = data.employee;
-      const curLockedId = localStorage.getItem('kiosk_locked_employee_id');
-      if (curLockedId && String(emp.id) !== curLockedId) {
-        throw new Error(`Este dispositivo móvil está registrado a nombre de: ${localStorage.getItem('kiosk_locked_employee_name') || 'otro colaborador'}. Solo esa persona puede marcar asistencia aquí.`);
-      }
+      
+      if (isLockEnabled) {
+        const curLockedId = localStorage.getItem('kiosk_locked_employee_id');
+        if (curLockedId && String(emp.id) !== curLockedId) {
+          throw new Error(`Este dispositivo móvil está registrado a nombre de: ${localStorage.getItem('kiosk_locked_employee_name') || 'otro colaborador'}. Solo esa persona puede marcar asistencia aquí.`);
+        }
 
-      if (!curLockedId) {
-        localStorage.setItem('kiosk_locked_employee_id', String(emp.id));
-        localStorage.setItem('kiosk_locked_employee_name', String(emp.name));
-        setLockedEmployeeId(String(emp.id));
-        setLockedEmployeeName(String(emp.name));
+        if (!curLockedId) {
+          localStorage.setItem('kiosk_locked_employee_id', String(emp.id));
+          localStorage.setItem('kiosk_locked_employee_name', String(emp.name));
+          setLockedEmployeeId(String(emp.id));
+          setLockedEmployeeName(String(emp.name));
+        }
+      } else {
+        localStorage.removeItem('kiosk_locked_employee_id');
+        localStorage.removeItem('kiosk_locked_employee_name');
+        setLockedEmployeeId(null);
+        setLockedEmployeeName(null);
       }
 
       if (data.access_token) {
@@ -1345,12 +1442,18 @@ function KioskScreen() {
             <Settings size={18} />
           </button>
 
-          <div className="brand" style={{ color: '#17202a', border: 0, padding: 0, justifyContent: 'center', marginBottom: '28px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div className="brand" style={{ color: '#17202a', border: 0, padding: 0, justifyContent: 'center', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
             <div className="brand-mark" style={{ background: '#2f7dd1', color: 'white', fontWeight: 'bold' }}>K</div>
             <div>
               <strong>Kiosko Operativo</strong>
               <span style={{ fontSize: '12px', color: '#657487', display: 'block' }}>Marcación de Asistencia</span>
             </div>
+          </div>
+
+          {/* Reloj en vivo — pantalla de login */}
+          <div style={{ textAlign: 'center', marginBottom: '20px', padding: '12px 16px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+            <div style={{ fontSize: '28px', fontWeight: '900', color: '#0f172a', letterSpacing: '-0.5px', fontFamily: 'monospace' }}>{kioskTimeStr}</div>
+            <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px', textTransform: 'capitalize' }}>{kioskDateStr}</div>
           </div>
 
           {showConfig && (
@@ -1382,9 +1485,9 @@ function KioskScreen() {
 
           {loginMethod === 'pin' && (
             <form className="login-form" onSubmit={identify} style={{ marginTop: '0', display: 'grid', gap: '16px' }}>
-              {lockedEmployeeId && (
+              {isLockEnabled && lockedEmployeeId && (
                 <div style={{ background: '#fef2f2', border: '1px solid #fee2e2', padding: '12px', borderRadius: '12px', textAlign: 'center' }}>
-                  <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#b91c1c', display: 'block', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>🔒 Dispositivo Vinculado</span>
+                  <span style={{ fontSize: '11px', fontWeight: 'bold', color: '#b91c1c', display: 'flex', alignItems: 'center', gap: '4px', justifyContent: 'center', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}><Lock size={11} /> Dispositivo Vinculado</span>
                   <strong style={{ display: 'block', fontSize: '13px', color: '#991b1b' }}>Solo {lockedEmployeeName}</strong>
                   <button 
                     type="button" 
@@ -1531,12 +1634,8 @@ function KioskScreen() {
     statusBg = '#ecfdf5';
   }
 
-  const currentDateStr = new Date().toLocaleDateString('es-ES', { 
-    weekday: 'long', 
-    year: 'numeric', 
-    month: 'long', 
-    day: 'numeric' 
-  });
+  const currentDateStr = kioskDateStr;
+  const currentTimeStr = kioskTimeStr;
 
   return (
     <div style={{ display: 'grid', gap: '14px', width: '100%', padding: '0 4px', maxWidth: '480px', margin: '0 auto' }}>
@@ -1576,9 +1675,13 @@ function KioskScreen() {
 
         {/* Parámetros del día */}
         <div style={{ display: 'grid', gap: '8px', fontSize: '12px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ color: '#94a3b8' }}>Fecha actual:</span>
-            <strong style={{ color: '#f8fafc', textTransform: 'capitalize' }}>{currentDateStr}</strong>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: '#94a3b8' }}>Fecha:</span>
+            <strong style={{ color: '#f8fafc', textTransform: 'capitalize', fontSize: '12px' }}>{currentDateStr}</strong>
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ color: '#94a3b8' }}>Hora actual:</span>
+            <strong style={{ color: '#34d399', fontFamily: 'monospace', fontSize: '13px', letterSpacing: '0.5px' }}>{currentTimeStr}</strong>
           </div>
           <div style={{ display: 'flex', justifyContent: 'space-between' }}>
             <span style={{ color: '#94a3b8' }}>Salida automática:</span>
@@ -1807,6 +1910,11 @@ function TemporaryManagerPinScreen() {
   const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(new Date());
 
+  const [deviceLockEnabled, setDeviceLockEnabled] = useState(() => {
+    const val = localStorage.getItem('kiosk_device_lock_enabled');
+    return val === null ? true : val === 'true';
+  });
+
   // Periodically update the local time to update the countdown
   useEffect(() => {
     const timer = setInterval(() => {
@@ -1814,6 +1922,15 @@ function TemporaryManagerPinScreen() {
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  function handleToggleDeviceLock(enabled: boolean) {
+    setDeviceLockEnabled(enabled);
+    localStorage.setItem('kiosk_device_lock_enabled', String(enabled));
+    if (!enabled) {
+      localStorage.removeItem('kiosk_locked_employee_id');
+      localStorage.removeItem('kiosk_locked_employee_name');
+    }
+  }
 
   async function load() {
     setError('');
@@ -1877,12 +1994,12 @@ function TemporaryManagerPinScreen() {
 
   return (
     <>
-      <Header title="PIN Temporal de Gerente" subtitle="Generar códigos PIN de un solo uso para autorizaciones" />
+      <Header title="PIN Temporal de Gerente" subtitle="Generar códigos PIN de un solo uso y configurar seguridad del kiosko" />
       
       {error && <div className="error" style={{ marginBottom: 16 }}>{error}</div>}
       {message && <div className="badge" style={{ background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '10px 14px', marginBottom: 16, display: 'flex', fontWeight: 'bold' }}>{message}</div>}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '20px', alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px', alignItems: 'start' }}>
         
         {/* Generador de PIN */}
         <section className="panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
@@ -1907,7 +2024,7 @@ function TemporaryManagerPinScreen() {
                 {activePin.pin}
               </span>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '12px', background: '#ffffff', padding: '4px 12px', borderRadius: '20px', border: '1px solid #bfdbfe' }}>
-                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981', display: 'inline-block' }}></span>
+                <Circle size={8} fill="#10b981" stroke="none" />
                 <span style={{ fontSize: '13px', color: '#1e40af', fontWeight: 'bold' }}>Expira en: {countdownText}</span>
               </div>
             </div>
@@ -1949,6 +2066,44 @@ function TemporaryManagerPinScreen() {
           </p>
         </section>
 
+        {/* Panel de Seguridad Kiosko */}
+        <section className="panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', height: '100%', minHeight: '344px' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '16px', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <ShieldCheck size={20} style={{ color: '#2f7dd1' }} /> Seguridad del Kiosko
+          </h2>
+          <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: '1.5' }}>
+            Por defecto, el kiosko se vincula automáticamente al primer empleado que ingresa su PIN en un navegador nuevo. Esto evita que otros colaboradores marquen asistencia desde el mismo dispositivo (ideal si usan celulares personales).
+          </p>
+          <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '24px', lineHeight: '1.5' }}>
+            Desactiva esta opción si este navegador se utilizará en una tablet corporativa, monitor público o dispositivo compartido por toda la sucursal.
+          </p>
+          
+          <div style={{ marginTop: 'auto' }}>
+            <label style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '12px', 
+              cursor: 'pointer', 
+              fontSize: '13px', 
+              fontWeight: '700', 
+              color: deviceLockEnabled ? '#0f172a' : '#64748b', 
+              background: deviceLockEnabled ? '#f0fdf4' : '#f8fafc', 
+              padding: '16px', 
+              borderRadius: '12px', 
+              border: deviceLockEnabled ? '1px solid #bbf7d0' : '1px solid #e2e8f0',
+              transition: 'all 0.2s'
+            }}>
+              <input 
+                type="checkbox" 
+                checked={deviceLockEnabled} 
+                onChange={(e) => handleToggleDeviceLock(e.target.checked)} 
+                style={{ width: '20px', height: '20px', cursor: 'pointer' }}
+              />
+              <span style={{ flex: 1 }}>Vincular dispositivo al primer colaborador (Seguridad activa)</span>
+            </label>
+          </div>
+        </section>
+
         {/* Historial / Registro */}
         <section className="panel">
           <div className="panel-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1976,8 +2131,8 @@ function TemporaryManagerPinScreen() {
                     <tr key={String(item.id)}>
                       <td style={{ fontWeight: 'bold', fontFamily: 'monospace', letterSpacing: '1px' }}>{item.pin}</td>
                       <td>{renderValue(item.created_by_name)}</td>
-                      <td>{new Date(item.created_at).toLocaleString()}</td>
-                      <td>{new Date(item.expires_at).toLocaleString()}</td>
+                      <td>{fmtSV(item.created_at)}</td>
+                      <td>{fmtSV(item.expires_at)}</td>
                       <td>
                         <span style={{ 
                           display: 'inline-flex', 
@@ -2033,14 +2188,52 @@ function renderValue(value: unknown) {
   return String(value);
 }
 
+// Columnas que contienen timestamps y deben mostrarse como fecha + hora separadas
+const TIMESTAMP_COLUMNS = new Set([
+  'timestamp', 'check_in_at', 'check_out_at', 'check_in', 'check_out',
+  'created_at', 'updated_at', 'assigned_at', 'used_at', 'expires_at',
+]);
+
+function renderCell(column: string, value: unknown) {
+  if (TIMESTAMP_COLUMNS.has(column) && typeof value === 'string' && value) {
+    const d = toUTC(value);
+    const date = d.toLocaleDateString(SV_LOCALE, { timeZone: SV_TZ, day: '2-digit', month: '2-digit', year: 'numeric' });
+    const time = d.toLocaleTimeString(SV_LOCALE, { timeZone: SV_TZ, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+    return (
+      <span style={{ display: 'flex', flexDirection: 'column', lineHeight: '1.4', gap: '1px' }}>
+        <span style={{ fontWeight: '600', color: '#1e293b' }}>{date}</span>
+        <span style={{ fontSize: '11px', color: '#64748b' }}>{time}</span>
+      </span>
+    );
+  }
+  return renderValue(value);
+}
+
 export function App() {
   const isBackendAdminPath = window.location.pathname.includes('admindash');
   const [mode, setMode] = useState<'admin' | 'kiosk'>(isBackendAdminPath ? 'admin' : 'kiosk');
 
   const [user, setUser] = useState<ApiUser | null>(null);
   const [screen, setScreen] = useState('dashboard');
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [principalOpen, setPrincipalOpen] = useState(true);
+  const [configOpen, setConfigOpen] = useState(true);
   const resource = useMemo(() => resources.find((item) => item.key === screen), [screen]);
   const tableScreen = useMemo(() => tableScreens.find((item) => item.key === screen), [screen]);
+
+  // Items that belong to the "Avanzado" section
+  const advancedScreens = [
+    'assignment-templates', 'assignment-questions', 'auto-checkout-rules',
+    'attendance-event-types', 'permissions', 'no-attendance',
+    'hr-attendance', 'audit-logs', 'roles', 'employee-statuses', 'jobs', 'rules',
+  ];
+
+  // If we navigate to an advanced screen, auto-expand the section
+  useEffect(() => {
+    if (advancedScreens.includes(screen)) {
+      setAdvancedOpen(true);
+    }
+  }, [screen]);
 
   useEffect(() => {
     if (mode === 'admin') {
@@ -2068,40 +2261,114 @@ export function App() {
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">A</div>
-          <div><strong>Attendance SaaS</strong><span>Fase 4</span></div>
+          <div><strong>Attendance SaaS</strong><span>Admin</span></div>
         </div>
         <nav className="nav">
-          <button className={screen === 'dashboard' ? 'active' : ''} onClick={() => setScreen('dashboard')}><LayoutDashboard /> Dashboard</button>
-          
-          {/* MÁS UTILIZADOS AL INICIO */}
-          <button className={screen === 'employees' ? 'active' : ''} onClick={() => setScreen('employees')}><UsersRound /> Empleados</button>
-          <button className={screen === 'attendance-shifts' ? 'active' : ''} onClick={() => setScreen('attendance-shifts')}><CalendarClock /> Jornadas</button>
-          <button className={screen === 'attendance-events' ? 'active' : ''} onClick={() => setScreen('attendance-events')}><ClipboardList /> Registro de Eventos</button>
-          <button className={screen === 'reports' ? 'active' : ''} onClick={() => setScreen('reports')}><ClipboardList /> Reportes</button>
-          <button className={screen === 'employee-assignments' ? 'active' : ''} onClick={() => setScreen('employee-assignments')}><ClipboardList /> Tareas Asignadas</button>
-          
-          {/* CONFIGURACIÓN Y CATÁLOGOS ABAJO */}
-          <div style={{ height: '1px', background: '#e2e8f0', margin: '12px 10px 8px 10px' }} />
-          <span style={{ fontSize: '10px', fontWeight: 'bold', color: '#94a3b8', padding: '0 12px', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '4px' }}>Configuración</span>
-          
-          <button className={screen === 'company' ? 'active' : ''} onClick={() => setScreen('company')}><Building2 /> Empresa</button>
-          <button className={screen === 'branches' ? 'active' : ''} onClick={() => setScreen('branches')}><MapPin /> Sucursales</button>
-          <button className={screen === 'departments' ? 'active' : ''} onClick={() => setScreen('departments')}><Building2 /> Departamentos</button>
-          <button className={screen === 'devices' ? 'active' : ''} onClick={() => setScreen('devices')}><MonitorSmartphone /> Dispositivos Kiosko</button>
-          <button className={screen === 'users' ? 'active' : ''} onClick={() => setScreen('users')}><UserRound /> Usuarios Admin</button>
-          <button className={screen === 'temporary-manager-pin' ? 'active' : ''} onClick={() => setScreen('temporary-manager-pin')}><ShieldCheck size={18} /> PIN Temporal Gerente</button>
-          
-          <button className={screen === 'assignment-templates' ? 'active' : ''} onClick={() => setScreen('assignment-templates')}><ClipboardList /> Plantillas Tareas</button>
-          <button className={screen === 'assignment-questions' ? 'active' : ''} onClick={() => setScreen('assignment-questions')}><ListChecks /> Preguntas Plantilla</button>
-          <button className={screen === 'auto-checkout-rules' ? 'active' : ''} onClick={() => setScreen('auto-checkout-rules')}><Settings /> Reglas Auto-Checkout</button>
-          <button className={screen === 'attendance-event-types' ? 'active' : ''} onClick={() => setScreen('attendance-event-types')}><Settings /> Tipos de Marcación</button>
-          <button className={screen === 'permissions' ? 'active' : ''} onClick={() => setScreen('permissions')}><CheckSquare /> Permisos de Roles</button>
-          <button className={screen === 'no-attendance' ? 'active' : ''} onClick={() => setScreen('no-attendance')}><CalendarX /> No asistencia</button>
-          <button className={screen === 'hr-attendance' ? 'active' : ''} onClick={() => setScreen('hr-attendance')}><ClipboardList /> hr_attendance</button>
-          <button className={screen === 'audit-logs' ? 'active' : ''} onClick={() => setScreen('audit-logs')}><ClipboardList /> Auditoría de cambios</button>
-          
-          <div style={{ height: '1px', background: '#e2e8f0', margin: '12px 10px 8px 10px' }} />
-          <button onClick={() => window.open('/', '_blank')}><KeyRound /> Kiosko PIN</button>
+
+          {/* ─── SECCIÓN PRINCIPAL ───────────────────────────── */}
+          <button
+            type="button"
+            onClick={() => setPrincipalOpen(prev => !prev)}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              width: '100%', padding: '4px 12px 4px', fontSize: '10px', fontWeight: 'bold',
+              color: '#94a3b8', background: 'transparent', border: 'none', borderRadius: '6px',
+              cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.5px',
+              minHeight: 'unset', height: 'auto', margin: '0 4px 2px',
+            }}
+          >
+            <span>Principal</span>
+            {principalOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+          </button>
+          {principalOpen && (
+            <>
+              <button className={screen === 'dashboard' ? 'active' : ''} onClick={() => setScreen('dashboard')}><LayoutDashboard /> Dashboard</button>
+              <button className={screen === 'employees' ? 'active' : ''} onClick={() => setScreen('employees')}><UsersRound /> Empleados</button>
+              <button className={screen === 'attendance-shifts' ? 'active' : ''} onClick={() => setScreen('attendance-shifts')}><CalendarClock /> Jornadas</button>
+              <button className={screen === 'attendance-events' ? 'active' : ''} onClick={() => setScreen('attendance-events')}><ClipboardList /> Registro de Eventos</button>
+              <button className={screen === 'reports' ? 'active' : ''} onClick={() => setScreen('reports')}><ClipboardList /> Reportes</button>
+              <button className={screen === 'employee-assignments' ? 'active' : ''} onClick={() => setScreen('employee-assignments')}><ListChecks /> Tareas Asignadas</button>
+              <button className={screen === 'temporary-manager-pin' ? 'active' : ''} onClick={() => setScreen('temporary-manager-pin')}><ShieldCheck size={18} /> PIN Temporal Gerente</button>
+            </>
+          )}
+
+          {/* ─── SECCIÓN CONFIGURACIÓN ───────────────────────── */}
+          <div style={{ height: '1px', background: '#e2e8f0', margin: '10px 10px 6px' }} />
+          <button
+            type="button"
+            onClick={() => setConfigOpen(prev => !prev)}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              width: '100%', padding: '4px 12px 4px', fontSize: '10px', fontWeight: 'bold',
+              color: '#94a3b8', background: 'transparent', border: 'none', borderRadius: '6px',
+              cursor: 'pointer', textTransform: 'uppercase', letterSpacing: '0.5px',
+              minHeight: 'unset', height: 'auto', margin: '0 4px 2px',
+            }}
+          >
+            <span>Configuración</span>
+            {configOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+          </button>
+          {configOpen && (
+            <>
+              <button className={screen === 'company' ? 'active' : ''} onClick={() => setScreen('company')}><Building2 /> Empresa</button>
+              <button className={screen === 'branches' ? 'active' : ''} onClick={() => setScreen('branches')}><MapPin /> Sucursales</button>
+              <button className={screen === 'departments' ? 'active' : ''} onClick={() => setScreen('departments')}><DoorOpen /> Departamentos</button>
+              <button className={screen === 'devices' ? 'active' : ''} onClick={() => setScreen('devices')}><MonitorSmartphone /> Dispositivos Kiosko</button>
+              <button className={screen === 'users' ? 'active' : ''} onClick={() => setScreen('users')}><UserRound /> Usuarios Admin</button>
+            </>
+          )}
+
+          {/* ─── SECCIÓN AVANZADO (colapsable) ───────────────── */}
+          <div style={{ height: '1px', background: '#e2e8f0', margin: '12px 10px 6px' }} />
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen(prev => !prev)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              width: '100%',
+              textAlign: 'left',
+              padding: '6px 12px',
+              fontSize: '10px',
+              fontWeight: 'bold',
+              color: advancedOpen ? '#475569' : '#94a3b8',
+              background: advancedOpen ? '#f1f5f9' : 'transparent',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px',
+              transition: 'all 0.2s',
+              minHeight: 'unset',
+              height: 'auto',
+              margin: '0 4px',
+            }}
+          >
+            {advancedOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+            Avanzado
+          </button>
+
+          {advancedOpen && (
+            <>
+              <button className={screen === 'assignment-templates' ? 'active' : ''} onClick={() => setScreen('assignment-templates')}><ClipboardList /> Plantillas Tareas</button>
+              <button className={screen === 'assignment-questions' ? 'active' : ''} onClick={() => setScreen('assignment-questions')}><ListChecks /> Preguntas Plantilla</button>
+              <button className={screen === 'auto-checkout-rules' ? 'active' : ''} onClick={() => setScreen('auto-checkout-rules')}><Settings /> Reglas Auto-Checkout</button>
+              <button className={screen === 'attendance-event-types' ? 'active' : ''} onClick={() => setScreen('attendance-event-types')}><Settings /> Tipos de Marcación</button>
+              <button className={screen === 'permissions' ? 'active' : ''} onClick={() => setScreen('permissions')}><CheckSquare /> Permisos de Roles</button>
+              <button className={screen === 'employee-statuses' ? 'active' : ''} onClick={() => setScreen('employee-statuses')}><BadgeCheck /> Estados Laborales</button>
+              <button className={screen === 'jobs' ? 'active' : ''} onClick={() => setScreen('jobs')}><BriefcaseBusiness /> Puestos</button>
+              <button className={screen === 'roles' ? 'active' : ''} onClick={() => setScreen('roles')}><ShieldCheck /> Roles</button>
+              <button className={screen === 'rules' ? 'active' : ''} onClick={() => setScreen('rules')}><ListChecks /> Reglas</button>
+              <button className={screen === 'no-attendance' ? 'active' : ''} onClick={() => setScreen('no-attendance')}><CalendarX /> No Asistencia</button>
+              <button className={screen === 'hr-attendance' ? 'active' : ''} onClick={() => setScreen('hr-attendance')}><ClipboardList /> hr_attendance</button>
+              <button className={screen === 'audit-logs' ? 'active' : ''} onClick={() => setScreen('audit-logs')}><ClipboardList /> Auditoría de cambios</button>
+            </>
+          )}
+
+          {/* ─── ACCESO KIOSKO ────────────────────────────────── */}
+          <div style={{ height: '1px', background: '#e2e8f0', margin: '12px 10px 6px' }} />
+          <button onClick={() => window.open('/', '_blank')}><KeyRound /> Abrir Kiosko</button>
         </nav>
         <div className="session">
           <span>{user.login}</span>
