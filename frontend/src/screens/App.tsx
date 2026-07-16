@@ -1345,6 +1345,11 @@ function KioskScreen() {
   const [error, setError] = useState('');
   const [showConfig, setShowConfig] = useState(false);
   const [tempDeviceCode, setTempDeviceCode] = useState(deviceCode);
+  const [sessionTimeout, setSessionTimeout] = useState<number>(() => {
+    const saved = localStorage.getItem('kiosk_session_timeout');
+    return saved ? parseInt(saved, 10) : 30;
+  });
+  const [tempTimeout, setTempTimeout] = useState(sessionTimeout);
 
   const [loginMethod, setLoginMethod] = useState<'face' | 'pin' | 'manager_override'>('face');
   const [authMethodUsed, setAuthMethodUsed] = useState<'pin' | 'face_id'>('pin');
@@ -1419,6 +1424,34 @@ function KioskScreen() {
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Cierre de sesión automático por inactividad del empleado
+  useEffect(() => {
+    if (!employee || sessionTimeout <= 0) return;
+
+    let timeoutId: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        console.log("Cerrando sesión de empleado por inactividad.");
+        logoutEmployee();
+      }, sessionTimeout * 1000);
+    };
+
+    // Iniciar temporizador
+    resetTimer();
+
+    // Escuchar interacciones del usuario
+    const eventsList = ['mousemove', 'mousedown', 'keypress', 'touchstart', 'scroll', 'click'];
+    eventsList.forEach(event => window.addEventListener(event, resetTimer));
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      eventsList.forEach(event => window.removeEventListener(event, resetTimer));
+    };
+  }, [employee, sessionTimeout]);
+
   const kioskDateStr = now.toLocaleDateString(SV_LOCALE, { timeZone: SV_TZ, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   const kioskTimeStr = now.toLocaleTimeString(SV_LOCALE, { timeZone: SV_TZ, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
 
@@ -1738,6 +1771,7 @@ function KioskScreen() {
             onClick={() => {
               setShowConfig(!showConfig);
               setTempDeviceCode(deviceCode);
+              setTempTimeout(sessionTimeout);
             }}
             style={{ 
               position: 'absolute', 
@@ -1775,27 +1809,60 @@ function KioskScreen() {
           {showConfig && (
             <div className="panel" style={{ padding: '16px', marginBottom: '20px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
               <strong style={{ fontSize: '14px', display: 'block', marginBottom: '8px', color: '#1e293b' }}>Configurar Dispositivo</strong>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <input 
-                  value={tempDeviceCode} 
-                  onChange={(e) => setTempDeviceCode(e.target.value)} 
-                  placeholder="Código de Dispositivo"
-                  style={{ minHeight: '38px', height: '38px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }}
-                />
-                <button 
-                  className="primary" 
-                  type="button" 
-                  onClick={() => {
-                    setDeviceCode(tempDeviceCode);
-                    localStorage.setItem('kiosk_device_code', tempDeviceCode);
-                    setShowConfig(false);
-                  }}
-                  style={{ minHeight: '38px', height: '38px', padding: '0 16px', borderRadius: '8px' }}
-                >
-                  Guardar
-                </button>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>
+                    Código de Dispositivo
+                  </label>
+                  <input 
+                    value={tempDeviceCode} 
+                    onChange={(e) => setTempDeviceCode(e.target.value)} 
+                    placeholder="Código de Dispositivo"
+                    style={{ minHeight: '38px', height: '38px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', width: '100%', boxSizing: 'border-box' }}
+                  />
+                </div>
+                
+                <div>
+                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>
+                    Cierre de sesión automático por inactividad (segundos, 0 para desactivar)
+                  </label>
+                  <input 
+                    type="number"
+                    min="0"
+                    value={tempTimeout} 
+                    onChange={(e) => setTempTimeout(parseInt(e.target.value, 10) || 0)} 
+                    placeholder="Ej. 30"
+                    style={{ minHeight: '38px', height: '38px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', width: '100%', boxSizing: 'border-box' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                  <button 
+                    className="primary" 
+                    type="button" 
+                    onClick={() => {
+                      setDeviceCode(tempDeviceCode);
+                      localStorage.setItem('kiosk_device_code', tempDeviceCode);
+                      setSessionTimeout(tempTimeout);
+                      localStorage.setItem('kiosk_session_timeout', String(tempTimeout));
+                      setShowConfig(false);
+                    }}
+                    style={{ minHeight: '38px', height: '38px', padding: '0 16px', borderRadius: '8px' }}
+                  >
+                    Guardar
+                  </button>
+                  <button 
+                    className="ghost" 
+                    type="button" 
+                    onClick={() => setShowConfig(false)}
+                    style={{ minHeight: '38px', height: '38px', padding: '0 16px', borderRadius: '8px' }}
+                  >
+                    Cancelar
+                  </button>
+                </div>
               </div>
-              <small style={{ color: '#64748b', marginTop: '6px', display: 'block' }}>Dispositivo actual: <code>{deviceCode}</code></small>
+              <small style={{ color: '#64748b', marginTop: '10px', display: 'block' }}>Dispositivo actual: <code>{deviceCode}</code> | Cooldown: <code>{sessionTimeout === 0 ? 'Desactivado' : `${sessionTimeout}s`}</code></small>
             </div>
           )}
 
