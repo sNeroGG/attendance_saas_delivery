@@ -183,6 +183,7 @@ class XDevice(Base, CompanyScopedMixin, AuditMixin, ActiveMixin):
     device_type: Mapped[str] = mapped_column(String(40), default="kiosk", nullable=False)
     last_ip: Mapped[str | None] = mapped_column(String(80))
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
+    session_timeout: Mapped[int] = mapped_column(Integer, default=30, nullable=False, server_default="30")
 
 
 class XAttendanceEventType(Base, CompanyScopedMixin, AuditMixin, ActiveMixin):

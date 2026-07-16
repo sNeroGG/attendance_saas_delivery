@@ -175,11 +175,12 @@ const resources: ResourceConfig[] = [
     title: 'Dispositivos',
     endpoint: '/devices',
     icon: <MonitorSmartphone />,
-    columns: ['id', 'name', 'device_code', 'device_type', 'branch_id', 'active'],
+    columns: ['id', 'name', 'device_code', 'device_type', 'session_timeout', 'branch_id', 'active'],
     fields: [
       { name: 'name', label: 'Nombre', required: true },
       { name: 'device_code', label: 'Codigo dispositivo', required: true },
       { name: 'device_type', label: 'Tipo' },
+      { name: 'session_timeout', label: 'Cierre de sesión inactiva (segundos)', type: 'number' },
       { name: 'branch_id', label: 'Sucursal ID', type: 'number' },
       { name: 'last_ip', label: 'Ultima IP' },
       { name: 'active', label: 'Activo', type: 'checkbox' },
@@ -1349,7 +1350,6 @@ function KioskScreen() {
     const saved = localStorage.getItem('kiosk_session_timeout');
     return saved ? parseInt(saved, 10) : 30;
   });
-  const [tempTimeout, setTempTimeout] = useState(sessionTimeout);
 
   const [loginMethod, setLoginMethod] = useState<'face' | 'pin' | 'manager_override'>('face');
   const [authMethodUsed, setAuthMethodUsed] = useState<'pin' | 'face_id'>('pin');
@@ -1451,6 +1451,23 @@ function KioskScreen() {
       eventsList.forEach(event => window.removeEventListener(event, resetTimer));
     };
   }, [employee, sessionTimeout]);
+
+  // Cargar configuración del dispositivo al montar o cambiar el código
+  useEffect(() => {
+    async function fetchConfig() {
+      try {
+        const data = await api.request<{ device?: { session_timeout?: number } }>(`/kiosk/${encodeURIComponent(deviceCode)}/config`);
+        if (data && data.device) {
+          const timeout = data.device.session_timeout ?? 30;
+          setSessionTimeout(timeout);
+          localStorage.setItem('kiosk_session_timeout', String(timeout));
+        }
+      } catch (err) {
+        console.error("Error cargando configuración del dispositivo:", err);
+      }
+    }
+    fetchConfig();
+  }, [deviceCode]);
 
   const kioskDateStr = now.toLocaleDateString(SV_LOCALE, { timeZone: SV_TZ, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   const kioskTimeStr = now.toLocaleTimeString(SV_LOCALE, { timeZone: SV_TZ, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
@@ -1771,7 +1788,6 @@ function KioskScreen() {
             onClick={() => {
               setShowConfig(!showConfig);
               setTempDeviceCode(deviceCode);
-              setTempTimeout(sessionTimeout);
             }}
             style={{ 
               position: 'absolute', 
@@ -1822,20 +1838,6 @@ function KioskScreen() {
                     style={{ minHeight: '38px', height: '38px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', width: '100%', boxSizing: 'border-box' }}
                   />
                 </div>
-                
-                <div>
-                  <label style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', display: 'block', marginBottom: '4px' }}>
-                    Cierre de sesión automático por inactividad (segundos, 0 para desactivar)
-                  </label>
-                  <input 
-                    type="number"
-                    min="0"
-                    value={tempTimeout} 
-                    onChange={(e) => setTempTimeout(parseInt(e.target.value, 10) || 0)} 
-                    placeholder="Ej. 30"
-                    style={{ minHeight: '38px', height: '38px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', width: '100%', boxSizing: 'border-box' }}
-                  />
-                </div>
 
                 <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
                   <button 
@@ -1844,8 +1846,6 @@ function KioskScreen() {
                     onClick={() => {
                       setDeviceCode(tempDeviceCode);
                       localStorage.setItem('kiosk_device_code', tempDeviceCode);
-                      setSessionTimeout(tempTimeout);
-                      localStorage.setItem('kiosk_session_timeout', String(tempTimeout));
                       setShowConfig(false);
                     }}
                     style={{ minHeight: '38px', height: '38px', padding: '0 16px', borderRadius: '8px' }}
@@ -1862,7 +1862,7 @@ function KioskScreen() {
                   </button>
                 </div>
               </div>
-              <small style={{ color: '#64748b', marginTop: '10px', display: 'block' }}>Dispositivo actual: <code>{deviceCode}</code> | Cooldown: <code>{sessionTimeout === 0 ? 'Desactivado' : `${sessionTimeout}s`}</code></small>
+              <small style={{ color: '#64748b', marginTop: '10px', display: 'block' }}>Dispositivo actual: <code>{deviceCode}</code> | Cooldown de inactividad: <code>{sessionTimeout === 0 ? 'Desactivado' : `${sessionTimeout}s`}</code></small>
             </div>
           )}
 

@@ -13,6 +13,7 @@ class DeviceIn(BaseModel):
     device_type: str = "kiosk"
     last_ip: str | None = None
     active: bool = True
+    session_timeout: int = 30
 
 
 class DeviceOut(DeviceIn, ORMModel):

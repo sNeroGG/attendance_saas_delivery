@@ -25,7 +25,14 @@ def kiosk_config(device_code: str, request: Request, db: Session = Depends(get_d
     device.last_seen_at = datetime.utcnow()
     device.last_ip = request.client.host if request.client else None
     db.commit()
-    return {"device": {"id": device.id, "name": device.name, "device_code": device.device_code, "branch_id": device.branch_id, "company_id": device.company_id}}
+    return {"device": {
+        "id": device.id, 
+        "name": device.name, 
+        "device_code": device.device_code, 
+        "branch_id": device.branch_id, 
+        "company_id": device.company_id,
+        "session_timeout": device.session_timeout
+    }}
 
 
 @router.post("/identify-pin")
