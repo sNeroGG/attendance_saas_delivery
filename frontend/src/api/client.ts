@@ -13,7 +13,14 @@ const API_BASE_URL = (() => {
   if (envUrl && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
     return envUrl;
   }
+  const protocol = window.location.protocol;
   const hostname = window.location.hostname;
+  const port = window.location.port;
+
+  // Si estamos navegando por HTTPS (proxy reverso), hacemos la llamada por el mismo puerto seguro
+  if (protocol === 'https:') {
+    return `${protocol}//${hostname}${port ? ':' + port : ''}/api`;
+  }
   return `http://${hostname}:8095/api`;
 })();
 
