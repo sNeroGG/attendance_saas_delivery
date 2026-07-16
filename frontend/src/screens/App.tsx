@@ -1378,6 +1378,12 @@ function KioskScreen() {
   useEffect(() => {
     const shouldBeActive = (loginMethod === 'face' && !employee && cameraActive) || (employee && employeeNeedsFaceRegistration && cameraActive);
     if (shouldBeActive) {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        console.error("Cámara no disponible. Asegúrate de estar en una conexión segura (HTTPS o localhost).");
+        setError("El navegador bloqueó la cámara. Se requiere conexión segura (HTTPS o localhost) para usar Face ID.");
+        setCameraActive(false);
+        return;
+      }
       navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 320 } })
         .then((s) => {
           setStream(s);
