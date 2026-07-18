@@ -57,6 +57,9 @@ def identify_face(payload: FaceImageRequest, request: Request, db: Session = Dep
     user_data = None
     
     if employee:
+        if device:
+            from app.routes.kiosk import check_device_lock
+            check_device_lock(db, device, employee.id)
         clear_rate_limit(key)
         user = db.query(ResUser).filter_by(company_id=company_id, employee_id=employee.id, active=True).first()
         if user:

@@ -43,8 +43,25 @@ export class ApiClient {
     if (this.token) headers.set('Authorization', `Bearer ${this.token}`);
     const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
     if (!response.ok) {
-      const detail = await response.text();
-      throw new Error(detail || response.statusText);
+      let message = response.statusText;
+      try {
+        const body = await response.json();
+        if (body && typeof body === 'object') {
+          if ('detail' in body) {
+            message = String(body.detail);
+          } else if ('message' in body) {
+            message = String(body.message);
+          } else {
+            message = JSON.stringify(body);
+          }
+        }
+      } catch {
+        try {
+          const text = await response.text();
+          if (text) message = text;
+        } catch {}
+      }
+      throw new Error(message);
     }
     return response.json() as Promise<T>;
   }

@@ -19,19 +19,50 @@ def get_device_by_code(db: Session, device_code: str) -> XDevice:
     return device
 
 
+def check_device_lock(db: Session, device: XDevice, employee_id: int) -> None:
+    if not getattr(device, 'device_lock_enabled', True):
+        return
+    if device.locked_employee_id:
+        if device.locked_employee_id != employee_id:
+            from app.models import HrEmployee
+            locked_emp = db.get(HrEmployee, device.locked_employee_id)
+            locked_name = locked_emp.name if locked_emp else "otro colaborador"
+            raise HTTPException(
+                status_code=403,
+                detail=f"Este dispositivo móvil está registrado a nombre de: {locked_name}. Solo esa persona puede marcar asistencia aquí."
+            )
+    else:
+        # Lock to the first employee who logs in
+        device.locked_employee_id = employee_id
+        db.commit()
+
+
 @router.get("/{device_code}/config")
 def kiosk_config(device_code: str, request: Request, db: Session = Depends(get_db)):
     device = get_device_by_code(db, device_code)
     device.last_seen_at = datetime.utcnow()
     device.last_ip = request.client.host if request.client else None
     db.commit()
+    from app.models import ResCompany, HrEmployee
+    company = db.get(ResCompany, device.company_id)
+    session_timeout = company.kiosk_session_timeout if company else device.session_timeout
+    
+    locked_employee_name = None
+    if device.locked_employee_id:
+        emp = db.get(HrEmployee, device.locked_employee_id)
+        if emp:
+            locked_employee_name = emp.name
+
     return {"device": {
         "id": device.id, 
         "name": device.name, 
         "device_code": device.device_code, 
         "branch_id": device.branch_id, 
         "company_id": device.company_id,
-        "session_timeout": device.session_timeout
+        "session_timeout": session_timeout,
+        "device_lock_enabled": device.device_lock_enabled,
+        "locked_employee_id": device.locked_employee_id,
+        "locked_employee_name": locked_employee_name
     }}
 
 
@@ -47,6 +78,10 @@ def identify_pin(payload: KioskIdentifyPinRequest, db: Session = Depends(get_db)
                 employee = db.query(HrEmployee).filter_by(company_id=device.company_id, user_id=user.id, active=True).first()
             if not employee:
                 raise HTTPException(status_code=404, detail="Usuario sin empleado vinculado")
+            
+            # Check device lock
+            check_device_lock(db, device, employee.id)
+            
             clear_rate_limit(f"pin:{payload.device_code}")
             access_token = create_access_token(user)
             
@@ -147,6 +182,20 @@ def unlock_device(payload: KioskIdentifyPinRequest, db: Session = Depends(get_db
     from app.services.supervisor_validation import SupervisorValidationService
     try:
         SupervisorValidationService(db, device.company_id).validate_supervisor_pin(payload.pin)
+        device.locked_employee_id = None
+        db.commit()
         return {"status": "ok", "message": "Dispositivo desbloqueado"}
+    except Exception:
+        raise HTTPException(status_code=401, detail="PIN de Gerente invalido o sin permisos")
+
+
+@router.post("/verify-manager-pin")
+def verify_manager_pin(payload: KioskIdentifyPinRequest, db: Session = Depends(get_db)):
+    device = get_device_by_code(db, payload.device_code)
+    from app.services.supervisor_validation import SupervisorValidationService
+    try:
+        manager = SupervisorValidationService(db, device.company_id).validate_supervisor_pin(payload.pin)
+        SupervisorValidationService(db, device.company_id).check_supervisor_permission(manager, "attendance.edit_team")
+        return {"status": "ok", "message": "PIN de gerente verificado"}
     except Exception:
         raise HTTPException(status_code=401, detail="PIN de Gerente invalido o sin permisos")

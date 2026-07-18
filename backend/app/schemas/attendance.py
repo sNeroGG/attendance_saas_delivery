@@ -14,6 +14,8 @@ class DeviceIn(BaseModel):
     last_ip: str | None = None
     active: bool = True
     session_timeout: int = 30
+    device_lock_enabled: bool = True
+    locked_employee_id: int | None = None
 
 
 class DeviceOut(DeviceIn, ORMModel):

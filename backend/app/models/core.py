@@ -38,6 +38,7 @@ class ResCompany(Base, AuditMixin, ActiveMixin):
     timezone: Mapped[str] = mapped_column(String(80), default="America/El_Salvador", nullable=False)
     plan: Mapped[str] = mapped_column(String(80), default="starter", nullable=False)
     state: Mapped[str] = mapped_column(String(40), default="active", nullable=False)
+    kiosk_session_timeout: Mapped[int] = mapped_column(Integer, default=30, nullable=False, server_default="30")
 
 
 class XBranch(Base, CompanyScopedMixin, AuditMixin, ActiveMixin):
@@ -184,6 +185,8 @@ class XDevice(Base, CompanyScopedMixin, AuditMixin, ActiveMixin):
     last_ip: Mapped[str | None] = mapped_column(String(80))
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
     session_timeout: Mapped[int] = mapped_column(Integer, default=30, nullable=False, server_default="30")
+    device_lock_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default="1")
+    locked_employee_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
 
 class XAttendanceEventType(Base, CompanyScopedMixin, AuditMixin, ActiveMixin):

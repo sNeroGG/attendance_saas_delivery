@@ -31,6 +31,7 @@ class CompanyBase(BaseModel):
     plan: str | None = "starter"
     state: str | None = "active"
     active: bool | None = True
+    kiosk_session_timeout: int | None = 30
 
 
 class CompanyOut(CompanyBase, ORMModel):

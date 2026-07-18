@@ -175,12 +175,14 @@ const resources: ResourceConfig[] = [
     title: 'Dispositivos',
     endpoint: '/devices',
     icon: <MonitorSmartphone />,
-    columns: ['id', 'name', 'device_code', 'device_type', 'session_timeout', 'branch_id', 'active'],
+    columns: ['id', 'name', 'device_code', 'device_type', 'session_timeout', 'device_lock_enabled', 'locked_employee_id', 'active'],
     fields: [
       { name: 'name', label: 'Nombre', required: true },
       { name: 'device_code', label: 'Codigo dispositivo', required: true },
       { name: 'device_type', label: 'Tipo' },
       { name: 'session_timeout', label: 'Cierre de sesión inactiva (segundos)', type: 'number' },
+      { name: 'device_lock_enabled', label: 'Bloquear al primer colaborador', type: 'checkbox' },
+      { name: 'locked_employee_id', label: 'Colaborador vinculado ID (Vacío para desvincular)', type: 'number' },
       { name: 'branch_id', label: 'Sucursal ID', type: 'number' },
       { name: 'last_ip', label: 'Ultima IP' },
       { name: 'active', label: 'Activo', type: 'checkbox' },
@@ -721,6 +723,7 @@ function CompanyScreen() {
     { name: 'timezone', label: 'Zona horaria' },
     { name: 'plan', label: 'Plan' },
     { name: 'state', label: 'Estado' },
+    { name: 'kiosk_session_timeout', label: 'Límite sesión Kiosko (segundos)', type: 'number' },
     { name: 'active', label: 'Activo', type: 'checkbox' },
   ];
   const [payload, setPayload] = useState<Record<string, unknown>>({});
@@ -1363,19 +1366,16 @@ function KioskScreen() {
   const [employeePin, setEmployeePin] = useState('');
 
   // Estados de dispositivo vinculado a un solo empleado
-  const [lockedEmployeeId, setLockedEmployeeId] = useState<string | null>(localStorage.getItem('kiosk_locked_employee_id'));
-  const [lockedEmployeeName, setLockedEmployeeName] = useState<string | null>(localStorage.getItem('kiosk_locked_employee_name'));
+  const [lockedEmployeeId, setLockedEmployeeId] = useState<string | null>(null);
+  const [lockedEmployeeName, setLockedEmployeeName] = useState<string | null>(null);
 
-  const isLockEnabled = localStorage.getItem('kiosk_device_lock_enabled') !== 'false';
+  const [isLockEnabled, setIsLockEnabled] = useState<boolean>(true);
 
   // Sincronizar el estado de dispositivo vinculado si se apaga globalmente
   useEffect(() => {
     if (!isLockEnabled) {
       setLockedEmployeeId(null);
       setLockedEmployeeName(null);
-    } else {
-      setLockedEmployeeId(localStorage.getItem('kiosk_locked_employee_id'));
-      setLockedEmployeeName(localStorage.getItem('kiosk_locked_employee_name'));
     }
   }, [isLockEnabled]);
 
@@ -1456,11 +1456,14 @@ function KioskScreen() {
   useEffect(() => {
     async function fetchConfig() {
       try {
-        const data = await api.request<{ device?: { session_timeout?: number } }>(`/kiosk/${encodeURIComponent(deviceCode)}/config`);
+        const data = await api.request<any>(`/kiosk/${encodeURIComponent(deviceCode)}/config`);
         if (data && data.device) {
           const timeout = data.device.session_timeout ?? 30;
           setSessionTimeout(timeout);
           localStorage.setItem('kiosk_session_timeout', String(timeout));
+          setLockedEmployeeId(data.device.locked_employee_id ? String(data.device.locked_employee_id) : null);
+          setLockedEmployeeName(data.device.locked_employee_name ?? null);
+          setIsLockEnabled(data.device.device_lock_enabled !== false);
         }
       } catch (err) {
         console.error("Error cargando configuración del dispositivo:", err);
@@ -1495,23 +1498,9 @@ function KioskScreen() {
       
       const emp = data.employee;
       
-      if (isLockEnabled) {
-        const curLockedId = localStorage.getItem('kiosk_locked_employee_id');
-        if (curLockedId && String(emp.id) !== curLockedId) {
-          throw new Error(`Este dispositivo móvil está registrado a nombre de: ${localStorage.getItem('kiosk_locked_employee_name') || 'otro colaborador'}. Solo esa persona puede marcar asistencia aquí.`);
-        }
-
-        if (!curLockedId) {
-          localStorage.setItem('kiosk_locked_employee_id', String(emp.id));
-          localStorage.setItem('kiosk_locked_employee_name', String(emp.name));
-          setLockedEmployeeId(String(emp.id));
-          setLockedEmployeeName(String(emp.name));
-        }
-      } else {
-        localStorage.removeItem('kiosk_locked_employee_id');
-        localStorage.removeItem('kiosk_locked_employee_name');
-        setLockedEmployeeId(null);
-        setLockedEmployeeName(null);
+      if (isLockEnabled && !lockedEmployeeId) {
+        setLockedEmployeeId(String(emp.id));
+        setLockedEmployeeName(String(emp.name));
       }
 
       if (data.access_token) {
@@ -1584,17 +1573,9 @@ function KioskScreen() {
       
       if (data.access_token && data.employee) {
         const emp = data.employee;
-        if (isLockEnabled) {
-          const curLockedId = localStorage.getItem('kiosk_locked_employee_id');
-          if (curLockedId && String(emp.id) !== curLockedId) {
-            throw new Error(`Este dispositivo móvil está registrado a nombre de: ${localStorage.getItem('kiosk_locked_employee_name') || 'otro colaborador'}. Solo esa persona puede marcar asistencia aquí.`);
-          }
-          if (!curLockedId) {
-            localStorage.setItem('kiosk_locked_employee_id', String(emp.id));
-            localStorage.setItem('kiosk_locked_employee_name', String(emp.name));
-            setLockedEmployeeId(String(emp.id));
-            setLockedEmployeeName(String(emp.name));
-          }
+        if (isLockEnabled && !lockedEmployeeId) {
+          setLockedEmployeeId(String(emp.id));
+          setLockedEmployeeName(String(emp.name));
         }
 
         api.setToken(data.access_token);
@@ -1785,9 +1766,23 @@ function KioskScreen() {
           <button 
             className="ghost" 
             type="button" 
-            onClick={() => {
-              setShowConfig(!showConfig);
-              setTempDeviceCode(deviceCode);
+            onClick={async () => {
+              if (showConfig) {
+                setShowConfig(false);
+              } else {
+                const mgrPin = prompt("Ingrese el PIN de Gerente para configurar el dispositivo:");
+                if (!mgrPin) return;
+                try {
+                  await api.request('/kiosk/verify-manager-pin', {
+                    method: 'POST',
+                    body: JSON.stringify({ device_code: deviceCode, pin: mgrPin })
+                  });
+                  setTempDeviceCode(deviceCode);
+                  setShowConfig(true);
+                } catch (err) {
+                  alert(err instanceof Error ? err.message : 'PIN de Gerente inválido o sin permisos');
+                }
+              }
             }}
             style={{ 
               position: 'absolute', 
@@ -1801,9 +1796,10 @@ function KioskScreen() {
               display: 'grid',
               placeItems: 'center',
               border: 'none',
-              background: '#e9eef3'
+              background: 'transparent',
+              opacity: 0,
+              cursor: 'default'
             }}
-            title="Configurar dispositivo"
           >
             <Settings size={18} />
           </button>
@@ -1866,7 +1862,7 @@ function KioskScreen() {
             </div>
           )}
 
-          {error && <div className="error" style={{ fontSize: '13px', margin: '0 0 16px 0' }}>{error}</div>}
+          {error && <div className="error" style={{ fontSize: '13px', margin: '0 0 16px 0', textAlign: 'center' }}>{error}</div>}
           {message && <div className="badge" style={{ margin: '0 0 16px 0', display: 'flex', justifyContent: 'center', padding: '6px' }}>{message}</div>}
 
           {loginMethod === 'face' && (
@@ -2270,7 +2266,7 @@ function KioskScreen() {
         </span>
       </div>
 
-      {error && <div className="error" style={{ margin: '0', fontSize: '13px', borderRadius: '10px' }}>{error}</div>}
+      {error && <div className="error" style={{ margin: '0', fontSize: '13px', borderRadius: '10px', textAlign: 'center' }}>{error}</div>}
       {message && <div className="badge" style={{ margin: '0', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', padding: '10px 14px', width: '100%', justifyContent: 'center', fontWeight: 'bold', fontSize: '13px', borderRadius: '10px' }}>{message}</div>}
 
       {/* PANEL 1: REGISTRO DE EVENTOS */}
@@ -2461,6 +2457,8 @@ function TemporaryManagerPinScreen() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(new Date());
+  const [company, setCompany] = useState<any>(null);
+  const [kioskSessionTimeout, setKioskSessionTimeout] = useState<number>(30);
 
   const [deviceLockEnabled, setDeviceLockEnabled] = useState(() => {
     const val = localStorage.getItem('kiosk_device_lock_enabled');
@@ -2484,6 +2482,16 @@ function TemporaryManagerPinScreen() {
     }
   }
 
+  async function loadCompany() {
+    try {
+      const data = await api.request<any>('/companies/current');
+      setCompany(data);
+      setKioskSessionTimeout(data.kiosk_session_timeout ?? 30);
+    } catch (err) {
+      console.error("Error cargando configuración de la empresa:", err);
+    }
+  }
+
   async function load() {
     setError('');
     try {
@@ -2496,7 +2504,27 @@ function TemporaryManagerPinScreen() {
 
   useEffect(() => {
     load();
+    loadCompany();
   }, []);
+
+  async function saveTimeout() {
+    if (!company) return;
+    setError('');
+    setMessage('');
+    try {
+      const updated = await api.request<any>('/companies/current', {
+        method: 'PUT',
+        body: JSON.stringify({
+          ...company,
+          kiosk_session_timeout: Number(kioskSessionTimeout)
+        })
+      });
+      setCompany(updated);
+      setMessage('¡Límite de tiempo de sesión global de Kiosko actualizado con éxito!');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo guardar la configuración');
+    }
+  }
 
   async function generatePin() {
     setError('');
@@ -2626,11 +2654,11 @@ function TemporaryManagerPinScreen() {
           <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: '1.5' }}>
             Por defecto, el kiosko se vincula automáticamente al primer empleado que ingresa su PIN en un navegador nuevo. Esto evita que otros colaboradores marquen asistencia desde el mismo dispositivo (ideal si usan celulares personales).
           </p>
-          <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '24px', lineHeight: '1.5' }}>
+          <p style={{ fontSize: '13px', color: '#64748b', marginBottom: '20px', lineHeight: '1.5' }}>
             Desactiva esta opción si este navegador se utilizará en una tablet corporativa, monitor público o dispositivo compartido por toda la sucursal.
           </p>
           
-          <div style={{ marginTop: 'auto' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: 'auto' }}>
             <label style={{ 
               display: 'flex', 
               alignItems: 'center', 
@@ -2653,6 +2681,34 @@ function TemporaryManagerPinScreen() {
               />
               <span style={{ flex: 1 }}>Vincular dispositivo al primer colaborador (Seguridad activa)</span>
             </label>
+
+            {/* Nuevo campo de límite de tiempo global */}
+            <div style={{ background: '#f8fafc', border: '1px solid #e2e8f0', padding: '16px', borderRadius: '12px', display: 'grid', gap: '8px' }}>
+              <label style={{ fontSize: '13px', fontWeight: 'bold', color: '#334155' }}>
+                Límite de tiempo de sesión (segundos)
+              </label>
+              <span style={{ fontSize: '11px', color: '#64748b', lineHeight: '1.4' }}>
+                Tiempo máximo de inactividad de la sesión del empleado en el Kiosko antes de cerrarse automáticamente y requerir escaneo de rostro de nuevo.
+              </span>
+              <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                <input 
+                  type="number"
+                  min="5"
+                  max="3600"
+                  value={kioskSessionTimeout}
+                  onChange={(e) => setKioskSessionTimeout(Number(e.target.value))}
+                  style={{ flex: 1, minHeight: '38px', height: '38px', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box' }}
+                />
+                <button 
+                  type="button"
+                  className="primary"
+                  onClick={saveTimeout}
+                  style={{ minHeight: '38px', height: '38px', padding: '0 16px', borderRadius: '8px', fontWeight: 'bold' }}
+                >
+                  Guardar
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
