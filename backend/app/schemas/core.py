@@ -154,9 +154,10 @@ class EmployeeIn(BaseModel):
     is_active_for_work: bool = True
     notes: str | None = None
     active: bool = True
-    create_user_profile: bool | None = False
+    create_user_profile: bool | None = True
     user_login: str | None = None
     user_pin: str | None = None
+    task_template_ids: list[int] = Field(default_factory=list)
 
 
 class EmployeeOut(EmployeeIn, ORMModel):

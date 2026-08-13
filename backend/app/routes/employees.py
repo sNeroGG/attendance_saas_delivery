@@ -3,9 +3,12 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import HrEmployee, ResUser, XEmployeeRole, XEmployeeStatusHistory, XFaceTemplate
-from app.routes.common import apply_values, company_query, get_company_record, to_dict
+from app.routes.common import apply_values, company_query, get_company_record
 from app.schemas.core import AssignRoleRequest, ChangeStatusRequest, EmployeeIn, EmployeeOut
+from app.schemas.phase4 import LedgerOut
 from app.security.auth import get_current_user
+from app.services.employee_defaults import apply_employee_defaults, assign_templates
+from app.services.ledger import employee_ledger
 
 router = APIRouter(prefix="/employees", tags=["employees"])
 
@@ -42,10 +45,18 @@ def list_employees(db: Session = Depends(get_db), user: ResUser = Depends(get_cu
     return employees
 
 
+@router.get("/{record_id}/ledger", response_model=LedgerOut)
+def get_employee_ledger(record_id: int, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    get_company_record(db, HrEmployee, record_id, user)
+    return employee_ledger(db, user.company_id, record_id)
+
+
 @router.post("", response_model=EmployeeOut)
 def create_employee(payload: EmployeeIn, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
     data = payload.model_dump()
-    create_user_profile = data.pop("create_user_profile", False)
+    task_template_ids = data.pop("task_template_ids", []) or []
+    data = apply_employee_defaults(db, user.company_id, user.id, data)
+    create_user_profile = data.pop("create_user_profile", True)
     user_login = data.pop("user_login", None)
     user_pin = data.pop("user_pin", None)
 
@@ -77,6 +88,9 @@ def create_employee(payload: EmployeeIn, db: Session = Depends(get_db), user: Re
         db.flush()
         record.user_id = new_user.id
 
+    if task_template_ids:
+        assign_templates(db, user.company_id, user.id, record.id, task_template_ids)
+
     db.commit()
     db.refresh(record)
     populate_employee_user_fields(db, record)
@@ -93,7 +107,8 @@ def get_employee(record_id: int, db: Session = Depends(get_db), user: ResUser = 
 @router.put("/{record_id}", response_model=EmployeeOut)
 def update_employee(record_id: int, payload: EmployeeIn, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
     record = get_company_record(db, HrEmployee, record_id, user)
-    data = payload.model_dump()
+    data = payload.model_dump(exclude_unset=True)
+    data.pop("task_template_ids", None)
     create_user_profile = data.pop("create_user_profile", False)
     user_login = data.pop("user_login", None)
     user_pin = data.pop("user_pin", None)

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import ResUser, XAssignmentQuestion, XAssignmentTemplate, XEmployeeAssignment
+from app.models import HrEmployee, ResUser, XAssignmentQuestion, XAssignmentTemplate, XEmployeeAssignment
 from app.routes.common import apply_values, company_query, get_company_record, to_dict
 from app.schemas.assignments import (
     AssignmentQuestionIn,
@@ -18,6 +18,14 @@ from app.security.auth import get_current_user
 from app.services.assignments import AssignmentService
 
 router = APIRouter(tags=["assignments"])
+
+
+def serialize_assignment(db: Session, record: XEmployeeAssignment) -> XEmployeeAssignment:
+    template = db.get(XAssignmentTemplate, record.template_id)
+    employee = db.get(HrEmployee, record.employee_id)
+    record.template_name = template.name if template else None
+    record.employee_name = employee.name if employee else None
+    return record
 
 
 @router.get("/assignment-templates", response_model=list[AssignmentTemplateOut])
@@ -107,12 +115,13 @@ def kiosk_employee_assignments(employee_id: int, shift_id: int | None = None, db
 
 @router.get("/employee-assignments", response_model=list[EmployeeAssignmentOut])
 def list_employee_assignments(db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
-    return company_query(db, XEmployeeAssignment, user).order_by(XEmployeeAssignment.assigned_at.desc()).limit(300).all()
+    records = company_query(db, XEmployeeAssignment, user).order_by(XEmployeeAssignment.assigned_at.desc()).limit(300).all()
+    return [serialize_assignment(db, record) for record in records]
 
 
 @router.get("/employee-assignments/{record_id}", response_model=EmployeeAssignmentOut)
 def get_employee_assignment(record_id: int, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
-    return get_company_record(db, XEmployeeAssignment, record_id, user)
+    return serialize_assignment(db, get_company_record(db, XEmployeeAssignment, record_id, user))
 
 
 @router.post("/employee-assignments/{record_id}/answers")
@@ -152,7 +161,7 @@ def create_employee_assignment(payload: EmployeeAssignmentIn, db: Session = Depe
     db.add(record)
     db.commit()
     db.refresh(record)
-    return record
+    return serialize_assignment(db, record)
 
 
 @router.put("/employee-assignments/{record_id}", response_model=EmployeeAssignmentOut)
@@ -161,4 +170,4 @@ def update_employee_assignment(record_id: int, payload: EmployeeAssignmentIn, db
     apply_values(record, to_dict(payload), user.id)
     db.commit()
     db.refresh(record)
-    return record
+    return serialize_assignment(db, record)

@@ -11,3 +11,5 @@ PyJWT==2.10.1
 python-multipart==0.0.20
 opencv-python-headless>=4.8.0
 numpy>=1.21.0
+pytest==8.3.4
+tzdata==2025.2

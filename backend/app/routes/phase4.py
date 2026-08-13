@@ -8,6 +8,7 @@ from app.schemas.phase4 import (
     AutoCheckoutRuleIn,
     AutoCheckoutRuleOut,
     BiometricLogOut,
+    DailyReportOut,
     FaceIdentifyOut,
     FaceImageRequest,
     FaceTemplateOut,
@@ -112,6 +113,16 @@ def biometric_logs(db: Session = Depends(get_db), user: ResUser = Depends(get_cu
 @router.get("/audit-logs", response_model=list[AuditLogOut])
 def audit_logs(db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
     return company_query(db, XAuditLog, user).order_by(XAuditLog.timestamp.desc()).limit(300).all()
+
+
+@router.get("/reports/daily", response_model=DailyReportOut)
+def report_daily(employee_id: int | None = None, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    return ReportService(db, user.company_id).daily(employee_id)
+
+
+@router.get("/reports/dashboard", response_model=DailyReportOut)
+def report_dashboard(db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    return ReportService(db, user.company_id).dashboard()
 
 
 @router.get("/reports/hours", response_model=ReportSummary)

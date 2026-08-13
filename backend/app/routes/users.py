@@ -1,11 +1,13 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import ResUser
+from app.models import HrEmployee, ResUser
 from app.routes.common import apply_values, company_query, get_company_record, to_dict
 from app.schemas.core import UserCreate, UserOut, UserUpdate
+from app.schemas.phase4 import LedgerOut
 from app.security.auth import get_current_user, hash_secret
+from app.services.ledger import employee_ledger
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -17,6 +19,18 @@ def serialize_user(user: ResUser) -> ResUser:
 @router.get("", response_model=list[UserOut])
 def list_users(db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
     return company_query(db, ResUser, user).order_by(ResUser.name).all()
+
+
+@router.get("/{record_id}/ledger", response_model=LedgerOut)
+def get_user_ledger(record_id: int, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    record = get_company_record(db, ResUser, record_id, user)
+    employee_id = record.employee_id
+    if not employee_id:
+        employee = db.query(HrEmployee).filter_by(company_id=user.company_id, user_id=record.id).first()
+        employee_id = employee.id if employee else None
+    if not employee_id:
+        raise HTTPException(status_code=404, detail="Este usuario no tiene bitácora de empleado")
+    return employee_ledger(db, user.company_id, employee_id)
 
 
 @router.post("", response_model=UserOut)

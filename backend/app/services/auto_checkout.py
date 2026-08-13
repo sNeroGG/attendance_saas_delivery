@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.models import HrEmployee, XAttendanceEventType, XAttendanceShift, XAutoCheckoutRule
 from app.services.attendance_logic import AttendanceLogicService
 from app.services.audit_log import AuditLogService
+from app.services.operational_day import should_auto_close
 
 
 class AutoCheckoutService:
@@ -42,7 +43,9 @@ class AutoCheckoutService:
             rule = self.get_auto_checkout_rule(shift.employee_id, shift.branch_id)
             if not rule:
                 continue
-            self.auto_close_shift(shift.id, close_type.id, rule.note or "Auto checkout")
+            if not should_auto_close(shift.check_in_at):
+                continue
+            self.auto_close_shift(shift.id, close_type.id, rule.note or "Cierre automático al final de jornada (03:00)")
             closed.append(shift.id)
         return closed
 

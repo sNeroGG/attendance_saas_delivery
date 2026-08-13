@@ -49,6 +49,8 @@ class EmployeeAssignmentOut(ORMModel):
     blocks_check_out: bool
     state: str
     applied_rule_id: int | None
+    template_name: str | None = None
+    employee_name: str | None = None
 
 
 class AssignmentAnswerIn(BaseModel):

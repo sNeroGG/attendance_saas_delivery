@@ -88,3 +88,16 @@ class AutoCheckoutRuleOut(AutoCheckoutRuleIn, ORMModel):
 
 class ReportSummary(BaseModel):
     items: list[dict]
+
+
+class DailyReportOut(BaseModel):
+    operational_day: dict
+    summary: dict
+    employees: list[dict]
+    active_now: list[dict] | None = None
+    pending_validation: int | None = None
+
+
+class LedgerOut(BaseModel):
+    employee: dict | None
+    entries: list[dict]

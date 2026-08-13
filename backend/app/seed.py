@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models import HrEmployee, ResCompany, ResUser, XAssignmentQuestion, XAssignmentTemplate, XAttendanceEventType, XAutoCheckoutRule, XDevice, XEmployeeRole, XEmployeeStatus, XPermission, XRole, XRolePermission, XRule
 from app.security.auth import hash_secret
+from app.services.employee_defaults import resolve_org_defaults
 
 PERMISSIONS = {
     "Employee": [
@@ -95,6 +96,44 @@ def seed(db: Session) -> None:
         exists = db.query(XAttendanceEventType).filter_by(company_id=company.id, code=item["code"]).first()
         if not exists:
             db.add(XAttendanceEventType(company_id=company.id, create_uid=admin.id, write_uid=admin.id, **item))
+
+    resolve_org_defaults(db, company.id, admin.id)
+
+    template = db.query(XAssignmentTemplate).filter_by(company_id=company.id, name="Tareas del día").first()
+    if not template:
+        template = XAssignmentTemplate(
+            company_id=company.id,
+            name="Tareas del día",
+            description="Checklist operativo diario",
+            state="active",
+            create_uid=admin.id,
+            write_uid=admin.id,
+        )
+        db.add(template)
+        db.flush()
+        db.add(XAssignmentQuestion(
+            company_id=company.id,
+            template_id=template.id,
+            name="Apertura",
+            question_text="¿Completó las tareas de apertura asignadas?",
+            question_type="boolean",
+            required=True,
+            sequence=10,
+            create_uid=admin.id,
+            write_uid=admin.id,
+        ))
+
+    checkout = db.query(XAutoCheckoutRule).filter_by(company_id=company.id, checkout_time="03:00").first()
+    if not checkout:
+        db.add(XAutoCheckoutRule(
+            company_id=company.id,
+            auto_checkout_enabled=True,
+            checkout_time="03:00",
+            timezone="America/El_Salvador",
+            note="Cierre automático al final de jornada (11:00 – 03:00)",
+            create_uid=admin.id,
+            write_uid=admin.id,
+        ))
 
     db.commit()
 
