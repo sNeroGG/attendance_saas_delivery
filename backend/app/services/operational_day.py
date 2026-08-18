@@ -69,10 +69,21 @@ def should_auto_close(check_in_at: datetime, moment: datetime | None = None) -> 
     return as_utc(moment) >= window_end
 
 
-def evaluate_compliance(checked_in: bool, required_pending: int) -> dict:
+def evaluate_compliance(checked_in: bool, required_pending: int, is_off: bool = False, late: bool = False) -> dict:
     issues: list[str] = []
+    if is_off and not checked_in:
+        return {
+            "checked_in": False,
+            "required_pending": required_pending,
+            "compliant": required_pending == 0,
+            "issues": ["Tareas pendientes"] if required_pending > 0 else [],
+        }
     if not checked_in:
         issues.append("Sin check-in")
+    if late:
+        issues.append("Llegó tarde")
+    if is_off and checked_in:
+        issues.append("Marcó en día libre")
     if required_pending > 0:
         issues.append("Tareas pendientes")
     return {

@@ -4,6 +4,7 @@ from app.database import SessionLocal
 from app.models import HrEmployee, ResCompany, ResUser, XAssignmentQuestion, XAssignmentTemplate, XAttendanceEventType, XAutoCheckoutRule, XDevice, XEmployeeRole, XEmployeeStatus, XPermission, XRole, XRolePermission, XRule
 from app.security.auth import hash_secret
 from app.services.employee_defaults import resolve_org_defaults
+from app.services.schedules import ensure_default_schedule
 
 PERMISSIONS = {
     "Employee": [
@@ -135,6 +136,7 @@ def seed(db: Session) -> None:
             write_uid=admin.id,
         ))
 
+    ensure_default_schedule(db, company.id, admin.id)
     db.commit()
 
 

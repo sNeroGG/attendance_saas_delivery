@@ -1,9 +1,21 @@
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ORMModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+
+class TemplateTaskIn(BaseModel):
+    name: str
+    description: str | None = None
+
+
+class TemplateTaskOut(BaseModel):
+    id: int | None = None
+    name: str
+    description: str | None = None
+    sequence: int = 10
 
 
 class AssignmentTemplateIn(BaseModel):
@@ -11,11 +23,17 @@ class AssignmentTemplateIn(BaseModel):
     description: str | None = None
     state: str = "draft"
     active: bool = True
+    tasks: list[TemplateTaskIn] = Field(default_factory=list)
 
 
-class AssignmentTemplateOut(AssignmentTemplateIn, ORMModel):
+class AssignmentTemplateOut(ORMModel):
     id: int
     company_id: int
+    name: str
+    description: str | None = None
+    state: str
+    active: bool
+    tasks: list[TemplateTaskOut] = Field(default_factory=list)
 
 
 class AssignmentQuestionIn(BaseModel):
@@ -36,6 +54,14 @@ class AssignmentQuestionOut(AssignmentQuestionIn, ORMModel):
     template_id: int
 
 
+class AssignmentTaskStatusOut(BaseModel):
+    id: int
+    name: str
+    description: str | None = None
+    sequence: int = 10
+    completed: bool = False
+
+
 class EmployeeAssignmentOut(ORMModel):
     id: int
     company_id: int
@@ -51,6 +77,14 @@ class EmployeeAssignmentOut(ORMModel):
     applied_rule_id: int | None
     template_name: str | None = None
     employee_name: str | None = None
+
+
+class KioskAssignmentOut(EmployeeAssignmentOut):
+    tasks: list[AssignmentTaskStatusOut] = Field(default_factory=list)
+
+
+class KioskTaskToggleIn(BaseModel):
+    completed: bool = True
 
 
 class AssignmentAnswerIn(BaseModel):

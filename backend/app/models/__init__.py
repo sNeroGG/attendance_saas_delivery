@@ -28,6 +28,8 @@ from app.models.core import (
     XAutoCheckoutRule,
     XManagerTemporaryPin,
     XFaceTemplate,
+    XWorkSchedule,
+    XWorkScheduleLine,
     XBiometricLog,
 )
 
@@ -61,6 +63,8 @@ __all__ = [
     "XAutoCheckoutRule",
     "XManagerTemporaryPin",
     "XFaceTemplate",
+    "XWorkSchedule",
+    "XWorkScheduleLine",
     "XBiometricLog",
 ]
 

@@ -1,25 +1,18 @@
-from datetime import datetime, timedelta
-from fastapi import HTTPException
+from datetime import datetime
 
-_attempts: dict[str, list[datetime]] = {}
-_locks: dict[str, datetime] = {}
+_last_attempt: dict[str, datetime] = {}
+MIN_INTERVAL_SECONDS = 3
 
 
-def check_rate_limit(key: str, limit: int = 5, window_seconds: int = 60, lock_seconds: int = 120) -> None:
+def check_rate_limit(key: str, min_interval_seconds: int = MIN_INTERVAL_SECONDS) -> bool:
+    """Allows an attempt if at least 3 seconds passed since the last one. Never locks the user out."""
     now = datetime.utcnow()
-    locked_until = _locks.get(key)
-    if locked_until and locked_until > now:
-        raise HTTPException(status_code=429, detail="Demasiados intentos. Intenta mas tarde")
-    window_start = now - timedelta(seconds=window_seconds)
-    attempts = [item for item in _attempts.get(key, []) if item >= window_start]
-    if len(attempts) >= limit:
-        _locks[key] = now + timedelta(seconds=lock_seconds)
-        _attempts[key] = []
-        raise HTTPException(status_code=429, detail="Demasiados intentos. Bloqueo temporal aplicado")
-    attempts.append(now)
-    _attempts[key] = attempts
+    last = _last_attempt.get(key)
+    if last and (now - last).total_seconds() < min_interval_seconds:
+        return False
+    _last_attempt[key] = now
+    return True
 
 
 def clear_rate_limit(key: str) -> None:
-    _attempts.pop(key, None)
-    _locks.pop(key, None)
+    _last_attempt.pop(key, None)

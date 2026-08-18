@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routes import assignments, attendance, auth, branches, companies, departments, devices, employee_statuses, employees, jobs, kiosk, no_attendance, permissions, phase4, roles, rules, users, temporary_pins
+from app.routes import assignments, attendance, auth, branches, companies, departments, devices, employee_statuses, employees, jobs, kiosk, no_attendance, permissions, phase4, roles, rules, schedules, users, temporary_pins
 
 settings = get_settings()
 docs_url = "/docs" if settings.environment == "development" else None
@@ -38,6 +38,7 @@ app.include_router(kiosk.router, prefix="/api")
 app.include_router(no_attendance.router, prefix="/api")
 app.include_router(assignments.router, prefix="/api")
 app.include_router(rules.router, prefix="/api")
+app.include_router(schedules.router, prefix="/api")
 app.include_router(temporary_pins.router, prefix="/api")
 app.include_router(phase4.router, prefix="/api")
 

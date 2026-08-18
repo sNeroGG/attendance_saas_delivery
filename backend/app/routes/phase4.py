@@ -27,6 +27,8 @@ router = APIRouter(tags=["phase4"])
 
 @router.post("/employees/{employee_id}/register-face")
 def register_face(employee_id: int, payload: FaceImageRequest, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    from app.security.kiosk_session import require_own_employee_or_admin
+    require_own_employee_or_admin(db, user, employee_id)
     images = payload.images if payload.images else [payload.image_base64]
     FaceRecognitionService(db, user.company_id, user.id).register_face(employee_id, images)
     return {"ok": True}
@@ -46,10 +48,13 @@ def list_employee_face_templates(employee_id: int, db: Session = Depends(get_db)
 @router.post("/kiosk/identify-face", response_model=FaceIdentifyOut)
 def identify_face(payload: FaceImageRequest, request: Request, db: Session = Depends(get_db)):
     key = f"face:{payload.device_code or request.client.host if request.client else 'unknown'}"
-    check_rate_limit(key)
-    from app.models import XDevice
-    device = db.query(XDevice).filter_by(device_code=payload.device_code).first() if payload.device_code else None
-    company_id = device.company_id if device else 2
+    if not check_rate_limit(key):
+        return FaceIdentifyOut(employee_id=None, employee_name=None, success=False, confidence_score=0)
+    from app.routes.kiosk import check_device_lock, get_device_by_code, kiosk_employee_payload
+    if not payload.device_code:
+        return FaceIdentifyOut(employee_id=None, employee_name=None, success=False, confidence_score=0)
+    device = get_device_by_code(db, payload.device_code)
+    company_id = device.company_id
     employee, confidence = FaceRecognitionService(db, company_id).identify_face(payload.image_base64, payload.device_code, request.client.host if request.client else None)
     
     access_token = None
@@ -58,21 +63,14 @@ def identify_face(payload: FaceImageRequest, request: Request, db: Session = Dep
     user_data = None
     
     if employee:
-        if device:
-            from app.routes.kiosk import check_device_lock
-            check_device_lock(db, device, employee.id)
+        check_device_lock(db, device, employee.id)
         clear_rate_limit(key)
         user = db.query(ResUser).filter_by(company_id=company_id, employee_id=employee.id, active=True).first()
         if user:
             from app.security.auth import create_access_token
             access_token = create_access_token(user)
             token_type = "bearer"
-            employee_data = {
-                "id": employee.id,
-                "name": employee.name,
-                "employee_code": employee.employee_code,
-                "branch_id": employee.branch_id
-            }
+            employee_data = kiosk_employee_payload(db, employee)
             user_data = {
                 "id": user.id,
                 "name": user.name
@@ -92,9 +90,11 @@ def identify_face(payload: FaceImageRequest, request: Request, db: Session = Dep
 
 @router.post("/kiosk/supervisor-face-validation")
 def supervisor_face_validation(payload: SupervisorFaceValidationRequest, request: Request, db: Session = Depends(get_db)):
-    from app.models import XDevice
-    device = db.query(XDevice).filter_by(device_code=payload.device_code).first() if payload.device_code else None
-    company_id = device.company_id if device else 2
+    from app.routes.kiosk import get_device_by_code
+    if not payload.device_code:
+        return {"ok": False, "confidence_score": 0}
+    device = get_device_by_code(db, payload.device_code)
+    company_id = device.company_id
     employee, confidence = FaceRecognitionService(db, company_id).identify_face(payload.image_base64, payload.device_code, request.client.host if request.client else None)
     if not employee:
         return {"ok": False, "confidence_score": confidence}

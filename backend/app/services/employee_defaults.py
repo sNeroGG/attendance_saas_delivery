@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.models import HrDepartment, HrEmployee, HrJob, XAssignmentTemplate, XBranch, XEmployeeAssignment, XEmployeeStatus
 from app.services.operational_day import merge_employee_defaults
+from app.services.schedules import ensure_default_schedule
 
 
 def next_employee_code(db: Session, company_id: int) -> str:
@@ -47,6 +48,7 @@ def resolve_org_defaults(db: Session, company_id: int, user_id: int) -> dict:
             {"name": "De alta", "allows_check_in": True, "allows_assignments": True, "active": True},
             code="active",
         )
+    ensure_default_schedule(db, company_id, user_id)
     return {
         "branch_id": branch.id,
         "department_id": department.id,

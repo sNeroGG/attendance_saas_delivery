@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import HrEmployee, ResUser, XAssignmentQuestion, XAssignmentTemplate, XEmployeeAssignment
+from app.models import HrEmployee, ResUser, XAssignmentAnswer, XAssignmentQuestion, XAssignmentTemplate, XEmployeeAssignment
 from app.routes.common import apply_values, company_query, get_company_record, to_dict
 from app.schemas.assignments import (
     AssignmentQuestionIn,
@@ -11,13 +11,60 @@ from app.schemas.assignments import (
     AssignmentTemplateOut,
     EmployeeAssignmentIn,
     EmployeeAssignmentOut,
+    KioskAssignmentOut,
+    KioskTaskToggleIn,
     SaveAssignmentAnswersRequest,
     SupervisorValidationRequest,
+    TemplateTaskIn,
 )
 from app.security.auth import get_current_user
+from app.security.kiosk_session import require_kiosk_employee
 from app.services.assignments import AssignmentService
 
 router = APIRouter(tags=["assignments"])
+
+
+def serialize_template(db: Session, record: XAssignmentTemplate) -> dict:
+    questions = (
+        db.query(XAssignmentQuestion)
+        .filter_by(company_id=record.company_id, template_id=record.id, active=True)
+        .order_by(XAssignmentQuestion.sequence, XAssignmentQuestion.id)
+        .all()
+    )
+    return {
+        "id": record.id,
+        "company_id": record.company_id,
+        "name": record.name,
+        "description": record.description,
+        "state": record.state,
+        "active": record.active,
+        "tasks": [
+            {"id": item.id, "name": item.name, "description": item.question_text, "sequence": item.sequence}
+            for item in questions
+        ],
+    }
+
+
+def sync_template_tasks(db: Session, template: XAssignmentTemplate, tasks: list[TemplateTaskIn], user_id: int) -> None:
+    existing = db.query(XAssignmentQuestion).filter_by(company_id=template.company_id, template_id=template.id).all()
+    for question in existing:
+        question.active = False
+        question.write_uid = user_id
+    for index, task in enumerate(tasks):
+        name = (task.name or "").strip()
+        if not name:
+            continue
+        db.add(XAssignmentQuestion(
+            company_id=template.company_id,
+            template_id=template.id,
+            name=name,
+            question_text=(task.description or "").strip() or name,
+            question_type="boolean",
+            required=True,
+            sequence=(index + 1) * 10,
+            create_uid=user_id,
+            write_uid=user_id,
+        ))
 
 
 def serialize_assignment(db: Session, record: XEmployeeAssignment) -> XEmployeeAssignment:
@@ -28,32 +75,85 @@ def serialize_assignment(db: Session, record: XEmployeeAssignment) -> XEmployeeA
     return record
 
 
+def serialize_kiosk_assignment(db: Session, record: XEmployeeAssignment) -> dict:
+    serialize_assignment(db, record)
+    questions = (
+        db.query(XAssignmentQuestion)
+        .filter_by(company_id=record.company_id, template_id=record.template_id, active=True)
+        .order_by(XAssignmentQuestion.sequence, XAssignmentQuestion.id)
+        .all()
+    )
+    answers = {
+        item.question_id: item
+        for item in db.query(XAssignmentAnswer).filter_by(
+            company_id=record.company_id, employee_assignment_id=record.id,
+        ).all()
+    }
+    tasks = []
+    for question in questions:
+        answer = answers.get(question.id)
+        description = (question.question_text or "").strip()
+        tasks.append({
+            "id": question.id,
+            "name": question.name,
+            "description": description if description and description != question.name else None,
+            "sequence": question.sequence,
+            "completed": bool(answer and (answer.answer_boolean is True or answer.state == "done")),
+        })
+    return {
+        "id": record.id,
+        "company_id": record.company_id,
+        "employee_id": record.employee_id,
+        "shift_id": record.shift_id,
+        "template_id": record.template_id,
+        "assigned_at": record.assigned_at,
+        "due_at": record.due_at,
+        "required": record.required,
+        "blocks_check_in": record.blocks_check_in,
+        "blocks_check_out": record.blocks_check_out,
+        "state": record.state,
+        "applied_rule_id": record.applied_rule_id,
+        "template_name": record.template_name,
+        "employee_name": record.employee_name,
+        "tasks": tasks,
+    }
+
+
 @router.get("/assignment-templates", response_model=list[AssignmentTemplateOut])
 def list_templates(db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
-    return company_query(db, XAssignmentTemplate, user).order_by(XAssignmentTemplate.name).all()
+    records = company_query(db, XAssignmentTemplate, user).order_by(XAssignmentTemplate.name).all()
+    return [serialize_template(db, record) for record in records]
 
 
 @router.post("/assignment-templates", response_model=AssignmentTemplateOut)
 def create_template(payload: AssignmentTemplateIn, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
-    record = XAssignmentTemplate(**payload.model_dump(), company_id=user.company_id, create_uid=user.id, write_uid=user.id)
+    data = payload.model_dump()
+    data.pop("tasks", [])
+    record = XAssignmentTemplate(**data, company_id=user.company_id, create_uid=user.id, write_uid=user.id)
     db.add(record)
+    db.flush()
+    sync_template_tasks(db, record, payload.tasks, user.id)
     db.commit()
     db.refresh(record)
-    return record
+    return serialize_template(db, record)
 
 
 @router.get("/assignment-templates/{record_id}", response_model=AssignmentTemplateOut)
 def get_template(record_id: int, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
-    return get_company_record(db, XAssignmentTemplate, record_id, user)
+    return serialize_template(db, get_company_record(db, XAssignmentTemplate, record_id, user))
 
 
 @router.put("/assignment-templates/{record_id}", response_model=AssignmentTemplateOut)
 def update_template(record_id: int, payload: AssignmentTemplateIn, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
     record = get_company_record(db, XAssignmentTemplate, record_id, user)
-    apply_values(record, to_dict(payload), user.id)
+    data = to_dict(payload)
+    data.pop("tasks", None)
+    apply_values(record, data, user.id)
+    if "tasks" in payload.model_fields_set:
+        sync_template_tasks(db, record, payload.tasks, user.id)
     db.commit()
     db.refresh(record)
-    return record
+    return serialize_template(db, record)
 
 
 @router.post("/assignment-templates/{record_id}/archive", response_model=AssignmentTemplateOut)
@@ -64,7 +164,7 @@ def archive_template(record_id: int, db: Session = Depends(get_db), user: ResUse
     record.write_uid = user.id
     db.commit()
     db.refresh(record)
-    return record
+    return serialize_template(db, record)
 
 
 @router.get("/assignment-templates/{record_id}/questions", response_model=list[AssignmentQuestionOut])
@@ -102,15 +202,35 @@ def disable_question(record_id: int, db: Session = Depends(get_db), user: ResUse
     return record
 
 
-@router.get("/kiosk/employees/{employee_id}/assignments", response_model=list[EmployeeAssignmentOut])
-def kiosk_employee_assignments(employee_id: int, shift_id: int | None = None, db: Session = Depends(get_db)):
-    assignment = db.query(XEmployeeAssignment).filter_by(employee_id=employee_id).order_by(XEmployeeAssignment.assigned_at.desc()).first()
-    company_id = assignment.company_id if assignment else None
-    if company_id is None:
-        from app.models import HrEmployee
-        employee = db.get(HrEmployee, employee_id)
-        company_id = employee.company_id if employee else 0
-    return AssignmentService(db, company_id).get_pending_assignments(employee_id, shift_id)
+@router.get("/kiosk/employees/{employee_id}/assignments", response_model=list[KioskAssignmentOut])
+def kiosk_employee_assignments(
+    employee_id: int,
+    shift_id: int | None = None,
+    db: Session = Depends(get_db),
+    user: ResUser = Depends(get_current_user),
+):
+    require_kiosk_employee(db, user, employee_id)
+    employee = db.get(HrEmployee, employee_id)
+    if not employee or employee.company_id != user.company_id:
+        raise HTTPException(status_code=404, detail="Empleado no encontrado")
+    records = AssignmentService(db, user.company_id).get_pending_assignments(employee_id, shift_id)
+    return [serialize_kiosk_assignment(db, record) for record in records]
+
+
+@router.post("/kiosk/employee-assignments/{record_id}/tasks/{question_id}", response_model=KioskAssignmentOut)
+def kiosk_toggle_task(
+    record_id: int,
+    question_id: int,
+    payload: KioskTaskToggleIn,
+    db: Session = Depends(get_db),
+    user: ResUser = Depends(get_current_user),
+):
+    record = db.get(XEmployeeAssignment, record_id)
+    if not record or record.company_id != user.company_id:
+        raise HTTPException(status_code=404, detail="Asignacion no encontrada")
+    require_kiosk_employee(db, user, record.employee_id)
+    updated = AssignmentService(db, user.company_id, user.id).set_task_completed(record_id, question_id, payload.completed)
+    return serialize_kiosk_assignment(db, updated)
 
 
 @router.get("/employee-assignments", response_model=list[EmployeeAssignmentOut])

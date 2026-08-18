@@ -138,6 +138,55 @@ class AssignmentService:
         self.db.refresh(assignment)
         return assignment
 
+    def set_task_completed(self, employee_assignment_id: int, question_id: int, completed: bool) -> XEmployeeAssignment:
+        assignment = self._get_assignment(employee_assignment_id)
+        if assignment.state in COMPLETED_STATES:
+            raise HTTPException(status_code=400, detail="La asignacion ya esta completada")
+        question = self.db.get(XAssignmentQuestion, question_id)
+        if not question or question.company_id != self.company_id or question.template_id != assignment.template_id or not question.active:
+            raise HTTPException(status_code=404, detail="Tarea no encontrada")
+
+        if completed:
+            self.save_assignment_answers(employee_assignment_id, [
+                AssignmentAnswerIn(question_id=question_id, answer_boolean=True),
+            ])
+            assignment = self._get_assignment(employee_assignment_id)
+            unanswered = self._unanswered_required(assignment)
+            if not unanswered:
+                return self.complete_assignment(employee_assignment_id)
+            return assignment
+
+        answer = self.db.query(XAssignmentAnswer).filter_by(
+            company_id=self.company_id,
+            employee_assignment_id=assignment.id,
+            question_id=question.id,
+        ).first()
+        if answer:
+            self.db.delete(answer)
+            self.db.flush()
+        remaining = (
+            self.db.query(XAssignmentAnswer)
+            .filter_by(company_id=self.company_id, employee_assignment_id=assignment.id)
+            .count()
+        )
+        assignment.state = "in_progress" if remaining else "pending"
+        assignment.write_uid = self.user_id
+        self.db.commit()
+        self.db.refresh(assignment)
+        return assignment
+
+    def _unanswered_required(self, assignment: XEmployeeAssignment) -> list[str]:
+        questions = self.db.query(XAssignmentQuestion).filter_by(
+            company_id=self.company_id, template_id=assignment.template_id, active=True,
+        ).all()
+        answered_ids = {
+            row.question_id
+            for row in self.db.query(XAssignmentAnswer).filter_by(
+                company_id=self.company_id, employee_assignment_id=assignment.id,
+            ).all()
+        }
+        return [question.name for question in questions if question.required and question.id not in answered_ids]
+
     def _get_assignment(self, employee_assignment_id: int) -> XEmployeeAssignment:
         assignment = self.db.get(XEmployeeAssignment, employee_assignment_id)
         if not assignment or assignment.company_id != self.company_id:

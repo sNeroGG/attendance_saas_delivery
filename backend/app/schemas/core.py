@@ -32,6 +32,7 @@ class CompanyBase(BaseModel):
     state: str | None = "active"
     active: bool | None = True
     kiosk_session_timeout: int | None = 30
+    device_lock_enabled: bool | None = None
 
 
 class CompanyOut(CompanyBase, ORMModel):
@@ -154,6 +155,8 @@ class EmployeeIn(BaseModel):
     is_active_for_work: bool = True
     notes: str | None = None
     active: bool = True
+    schedule_id: int | None = None
+    role_id: int | None = None
     create_user_profile: bool | None = True
     user_login: str | None = None
     user_pin: str | None = None
@@ -164,6 +167,7 @@ class EmployeeOut(EmployeeIn, ORMModel):
     id: int
     company_id: int
     face_image: str | None = None
+    role_name: str | None = None
 
 
 class ChangeStatusRequest(BaseModel):
@@ -175,6 +179,7 @@ class RoleIn(BaseModel):
     name: str
     description: str | None = None
     active: bool = True
+    schedule_id: int | None = None
 
 
 class RoleOut(RoleIn, ORMModel):

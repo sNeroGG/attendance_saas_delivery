@@ -39,6 +39,8 @@ class ResCompany(Base, AuditMixin, ActiveMixin):
     plan: Mapped[str] = mapped_column(String(80), default="starter", nullable=False)
     state: Mapped[str] = mapped_column(String(40), default="active", nullable=False)
     kiosk_session_timeout: Mapped[int] = mapped_column(Integer, default=30, nullable=False, server_default="30")
+    device_lock_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, server_default="1")
+    default_schedule_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
 
 class XBranch(Base, CompanyScopedMixin, AuditMixin, ActiveMixin):
@@ -123,6 +125,7 @@ class HrEmployee(Base, CompanyScopedMixin, AuditMixin, ActiveMixin):
     rehire_date: Mapped[date | None] = mapped_column(Date)
     is_active_for_work: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
+    schedule_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
 
 class XEmployeeStatusHistory(Base, CompanyScopedMixin, AuditMixin):
@@ -143,6 +146,7 @@ class XRole(Base, CompanyScopedMixin, AuditMixin, ActiveMixin):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    schedule_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
 
 class XPermission(Base, AuditMixin, ActiveMixin):
@@ -247,6 +251,7 @@ class XAttendanceEvent(Base, CompanyScopedMixin, AuditMixin):
     evidence_url: Mapped[str | None] = mapped_column(String(500))
     source: Mapped[str] = mapped_column(String(40), default="kiosk", nullable=False)
     state: Mapped[str] = mapped_column(String(40), default="done", nullable=False)
+    punctuality: Mapped[str | None] = mapped_column(String(40))
 
 
 class HrAttendance(Base, CompanyScopedMixin, AuditMixin):
@@ -417,6 +422,28 @@ class XFaceTemplate(Base, CompanyScopedMixin, AuditMixin, ActiveMixin):
     face_feature: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider: Mapped[str] = mapped_column(String(40), default="opencv", nullable=False)
     confidence_threshold: Mapped[float] = mapped_column(Float, default=0.40, nullable=False)
+
+
+class XWorkSchedule(Base, CompanyScopedMixin, AuditMixin, ActiveMixin):
+    __tablename__ = "x_work_schedule"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    timezone: Mapped[str] = mapped_column(String(80), default="America/El_Salvador", nullable=False)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
+class XWorkScheduleLine(Base, CompanyScopedMixin, AuditMixin):
+    __tablename__ = "x_work_schedule_line"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    schedule_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
+    weekday: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_time: Mapped[str] = mapped_column(String(8), default="11:00", nullable=False)
+    end_time: Mapped[str] = mapped_column(String(8), default="03:00", nullable=False)
+    is_off: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    overnight: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
 class XBiometricLog(Base, CompanyScopedMixin):

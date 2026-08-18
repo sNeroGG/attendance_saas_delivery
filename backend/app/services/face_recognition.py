@@ -224,7 +224,7 @@ class FaceRecognitionService:
         self.db.commit()
         return (best_employee if success else None), best_confidence
 
-    def compare_face(self, image_base64: str, employee_id: int, device_code: str | None = None, ip_address: str | None = None) -> bool:
+    def compare_face(self, image_base64: str, employee_id: int, device_code: str | None = None, ip_address: str | None = None) -> tuple[bool, float]:
         template = self.db.query(XFaceTemplate).filter_by(company_id=self.company_id, employee_id=employee_id, active=True).first()
         if not template:
             BiometricLogService(self.db, self.company_id).record(
@@ -232,7 +232,7 @@ class FaceRecognitionService:
                 employee_id=employee_id, failure_reason="Sin plantilla", ip_address=ip_address
             )
             self.db.commit()
-            return False
+            return False, 0.0
 
         # Obtener características de la foto entrante
         incoming_img = self._base64_to_cv2(image_base64)
@@ -243,7 +243,7 @@ class FaceRecognitionService:
                 employee_id=employee_id, failure_reason="Rostro no detectable en cámara", ip_address=ip_address
             )
             self.db.commit()
-            return False
+            return False, 0.0
 
         ref_feature = None
         if template.face_feature:
@@ -267,10 +267,10 @@ class FaceRecognitionService:
                 employee_id=employee_id, failure_reason="Rostro base no detectable", ip_address=ip_address
             )
             self.db.commit()
-            return False
+            return False, 0.0
 
-        # Comparación real
-        COSINE_THRESHOLD = 0.40
+        # Comparación 1:1 contra el empleado de esta sesión
+        COSINE_THRESHOLD = 0.45
         try:
             recognizer = cv2.FaceRecognizerSF.create(SFACE_MODEL, "")
             score = recognizer.match(ref_feature, incoming_feature, cv2.FaceRecognizerSF_FR_COSINE)
@@ -290,4 +290,4 @@ class FaceRecognitionService:
             ip_address=ip_address
         )
         self.db.commit()
-        return success
+        return success, confidence

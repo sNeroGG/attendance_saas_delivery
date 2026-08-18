@@ -27,7 +27,12 @@ def verify_secret(value: str, hashed_value: str | None) -> bool:
 def create_access_token(user: ResUser) -> str:
     settings = get_settings()
     expires = datetime.now(UTC) + timedelta(minutes=settings.access_token_expire_minutes)
-    payload = {"sub": str(user.id), "company_id": user.company_id, "exp": expires}
+    payload = {
+        "sub": str(user.id),
+        "company_id": user.company_id,
+        "employee_id": user.employee_id,
+        "exp": expires,
+    }
     return jwt.encode(payload, settings.secret_key, algorithm="HS256")
 
 

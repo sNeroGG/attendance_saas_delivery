@@ -77,6 +77,7 @@ class KioskAttendanceEventCreate(BaseModel):
     note: str | None = None
     evidence_url: str | None = None
     method: str | None = None
+    manager_pin: str | None = None
 
 
 class AttendanceEventOut(ORMModel):
@@ -97,6 +98,7 @@ class AttendanceEventOut(ORMModel):
     evidence_url: str | None
     source: str
     state: str
+    punctuality: str | None = None
 
 
 class AttendanceEventUpdate(BaseModel):

@@ -13,6 +13,7 @@ from app.models import (
 )
 from app.services.assignments import AssignmentService
 from app.services.rule_engine import RuleEngineService
+from app.services.schedules import describe_employee_work
 
 
 class AttendanceLogicService:
@@ -110,6 +111,7 @@ class AttendanceLogicService:
         note: str | None = None,
         evidence_url: str | None = None,
         source: str = "kiosk",
+        manager_override: bool = False,
     ) -> XAttendanceEvent:
         now = timestamp or datetime.utcnow()
         employee = self._get_employee(employee_id)
@@ -127,6 +129,34 @@ class AttendanceLogicService:
             raise HTTPException(status_code=422, detail="Ya existe una jornada abierta")
         if current_shift and event_type.closes_shift and RuleEngineService(self.db, self.company_id).should_block_check_out(employee_id, current_shift.id):
             raise HTTPException(status_code=422, detail="Hay asignaciones obligatorias pendientes antes del check-out")
+
+        work = describe_employee_work(
+            self.db, self.company_id, employee, now,
+            opens_shift=event_type.opens_shift,
+            closes_shift=event_type.closes_shift,
+        )
+        punch = work["punch"]
+        bypass_schedule = manager_override or source in {"admin", "auto_checkout"}
+        if not punch["allowed"] and not bypass_schedule:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": punch["code"],
+                    "message": f'{punch["label"]}. Pida PIN de gerente para autorizar.',
+                    "requires_manager": True,
+                    "schedule_label": work["label"],
+                },
+            )
+        if punch.get("requires_manager") and punch["allowed"] and not bypass_schedule:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": punch["code"],
+                    "message": f'{punch["label"]}. Pida PIN de gerente para autorizar.',
+                    "requires_manager": True,
+                    "schedule_label": work["label"],
+                },
+            )
 
         device = self.db.get(XDevice, device_id) if device_id else None
         branch_id = device.branch_id if device else employee.branch_id
@@ -157,6 +187,7 @@ class AttendanceLogicService:
             evidence_url=evidence_url,
             source=source,
             state="done",
+            punctuality=punch["code"],
             create_uid=self.user_id,
             write_uid=self.user_id,
         )
