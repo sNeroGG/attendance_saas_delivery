@@ -64,9 +64,106 @@ def window_contains(moment: datetime, start: datetime, end: datetime) -> bool:
     return start <= value < end
 
 
+MISSING_CHECKOUT_GRACE = timedelta(hours=1)
+EXCUSED_REASONS = {"permiso", "excused", "falta_justificada"}
+MISSING_CHECKOUT_LABEL = "No marcó salida"
+ABSENT_LABEL = "Faltó"
+LATE_LABEL = "Tarde"
+PERMISSION_LABEL = "Permiso"
+OK_LABEL = "Todo bien"
+ISSUES_LABEL = "Algún detalle"
+
+
+def past_missing_checkout_deadline(window_end: datetime | None, moment: datetime | None = None) -> bool:
+    if window_end is None:
+        return False
+    return as_utc(moment) >= as_utc(window_end) + MISSING_CHECKOUT_GRACE
+
+
 def should_auto_close(check_in_at: datetime, moment: datetime | None = None) -> bool:
     _, window_end = operational_window(check_in_at)
-    return as_utc(moment) >= window_end
+    return past_missing_checkout_deadline(window_end, moment)
+
+
+def classify_employee_day(
+    *,
+    day: date,
+    today: date,
+    now: datetime,
+    is_off: bool,
+    excused: bool,
+    checked_in: bool,
+    checked_out: bool,
+    auto_closed: bool,
+    late: bool,
+    window_start: datetime | None,
+    window_end: datetime | None,
+) -> dict:
+    labels: list[str] = []
+    if is_off and not checked_in:
+        return {
+            "status": "off",
+            "status_label": "Día libre",
+            "labels": ["Día libre"],
+            "has_issue": False,
+            "excused": False,
+        }
+    if excused:
+        labels.append(PERMISSION_LABEL)
+        if not checked_in:
+            return {
+                "status": "ok",
+                "status_label": PERMISSION_LABEL,
+                "labels": labels,
+                "has_issue": False,
+                "excused": True,
+            }
+    if not checked_in:
+        if day > today:
+            return {
+                "status": "pending",
+                "status_label": "Pendiente",
+                "labels": ["Pendiente"],
+                "has_issue": False,
+                "excused": False,
+            }
+        if day == today and window_start and as_utc(now) < as_utc(window_start) + timedelta(minutes=10):
+            return {
+                "status": "pending",
+                "status_label": "Pendiente",
+                "labels": ["Aún no inicia"],
+                "has_issue": False,
+                "excused": False,
+            }
+        labels.append(ABSENT_LABEL)
+        return {
+            "status": "issues",
+            "status_label": ABSENT_LABEL,
+            "labels": labels,
+            "has_issue": True,
+            "excused": False,
+        }
+    if late:
+        labels.append(LATE_LABEL)
+    missing_out = auto_closed or (
+        checked_in and not checked_out and past_missing_checkout_deadline(window_end, now)
+    )
+    if missing_out:
+        labels.append(MISSING_CHECKOUT_LABEL)
+    elif checked_in and not checked_out:
+        labels.append("En jornada")
+    has_issue = LATE_LABEL in labels or MISSING_CHECKOUT_LABEL in labels or (is_off and checked_in)
+    if is_off and checked_in:
+        labels.append("Marcó en día libre")
+    if not labels:
+        labels = [OK_LABEL]
+    return {
+        "status": "issues" if has_issue else "ok",
+        "status_label": ISSUES_LABEL if has_issue else OK_LABEL,
+        "labels": labels,
+        "has_issue": has_issue,
+        "excused": excused,
+    }
 
 
 def evaluate_compliance(checked_in: bool, required_pending: int, is_off: bool = False, late: bool = False) -> dict:

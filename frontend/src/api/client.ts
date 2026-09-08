@@ -44,15 +44,19 @@ export class ApiClient {
     const response = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
     if (!response.ok) {
       let message = response.statusText;
+      let detail: unknown;
       try {
         const body = await response.json();
+        detail = body?.detail ?? body;
         if (body && typeof body === 'object') {
-          if ('detail' in body) {
-            message = String(body.detail);
+          if (typeof body.detail === 'string') {
+            message = body.detail;
+          } else if (body.detail && typeof body.detail === 'object' && 'message' in body.detail) {
+            message = String((body.detail as { message: unknown }).message);
           } else if ('message' in body) {
             message = String(body.message);
           } else {
-            message = JSON.stringify(body);
+            message = JSON.stringify(body.detail ?? body);
           }
         }
       } catch {
@@ -61,7 +65,10 @@ export class ApiClient {
           if (text) message = text;
         } catch {}
       }
-      throw new Error(message);
+      const error = new Error(message) as Error & { status?: number; detail?: unknown };
+      error.status = response.status;
+      error.detail = detail;
+      throw error;
     }
     return response.json() as Promise<T>;
   }

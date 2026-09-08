@@ -85,17 +85,11 @@ class AttendanceLogicService:
             
         # 2. En jornada activa
         # Mostrar: Salir a break, Salir a comida, y Salir de trabajar (si no hay salida automática)
-        from app.services.auto_checkout import AutoCheckoutService
-        auto_rule = AutoCheckoutService(self.db, self.company_id).get_auto_checkout_rule(employee_id, employee.branch_id)
-        has_auto_checkout = auto_rule is not None
-        
         allowed = []
         for item in event_types:
             if item.opens_shift:
                 continue
             if item.code in ["break_in", "meal_in"]:
-                continue
-            if item.closes_shift and has_auto_checkout:
                 continue
             allowed.append(item)
             
@@ -116,7 +110,9 @@ class AttendanceLogicService:
         now = timestamp or datetime.utcnow()
         employee = self._get_employee(employee_id)
         event_type = self._get_event_type(event_type_id)
-        self._assert_employee_can_check_in(employee)
+        auto_close = source == "auto_checkout"
+        if not auto_close:
+            self._assert_employee_can_check_in(employee)
         if event_type.requires_note and not note:
             raise HTTPException(status_code=422, detail="Este tipo de evento requiere nota")
         if event_type.requires_evidence and not evidence_url:
@@ -127,7 +123,12 @@ class AttendanceLogicService:
             raise HTTPException(status_code=422, detail="No hay jornada abierta para este evento")
         if current_shift and event_type.opens_shift:
             raise HTTPException(status_code=422, detail="Ya existe una jornada abierta")
-        if current_shift and event_type.closes_shift and RuleEngineService(self.db, self.company_id).should_block_check_out(employee_id, current_shift.id):
+        if (
+            current_shift
+            and event_type.closes_shift
+            and not auto_close
+            and RuleEngineService(self.db, self.company_id).should_block_check_out(employee_id, current_shift.id)
+        ):
             raise HTTPException(status_code=422, detail="Hay asignaciones obligatorias pendientes antes del check-out")
 
         work = describe_employee_work(
@@ -187,7 +188,7 @@ class AttendanceLogicService:
             evidence_url=evidence_url,
             source=source,
             state="done",
-            punctuality=punch["code"],
+            punctuality="missing_checkout" if auto_close else punch["code"],
             create_uid=self.user_id,
             write_uid=self.user_id,
         )
@@ -197,6 +198,9 @@ class AttendanceLogicService:
         if event_type.closes_shift and shift:
             shift.check_out_at = now
             shift.state = "closed"
+            shift.auto_closed = auto_close or shift.auto_closed
+            if auto_close:
+                shift.note = note or "No marcó salida"
             shift.write_uid = self.user_id
         if shift:
             self.recalculate_shift(shift.id)

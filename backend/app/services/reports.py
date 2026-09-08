@@ -1,4 +1,3 @@
-from datetime import timedelta
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -11,9 +10,11 @@ from app.models import (
     XEmployeeAssignment,
     XNoAttendanceNote,
 )
+from app.services.day_board import DayBoardService
 from app.services.operational_day import (
     COMPLETED_TASK_STATES,
     SHIFT_LABEL,
+    as_local,
     evaluate_compliance,
     window_contains,
 )
@@ -79,6 +80,10 @@ class ReportService:
         if start is None or end is None:
             start, end = operational_window()
 
+        board = DayBoardService(self.db, self.company_id)
+        board_day = report_date or as_local().date()
+        notes = board._notes_by_employee(board_day)
+
         rows = []
         for employee in employees:
             schedule, _ = resolve_employee_schedule(self.db, self.company_id, employee)
@@ -96,9 +101,8 @@ class ReportService:
             emp_shifts = sorted(emp_shifts, key=lambda item: item.check_in_at)
             current_shift = emp_shifts[-1] if emp_shifts else None
             checked_in = current_shift is not None
-            late = False
-            if checked_in and current_shift and emp_window.get("start"):
-                late = current_shift.check_in_at > emp_window["start"] + timedelta(minutes=10)
+            classified = board.employee_row(employee, board_day, notes=notes)
+            late = classified.get("late") or False
 
             emp_assignments = [
                 item for item in assignments
@@ -119,7 +123,15 @@ class ReportService:
             required = [item for item in unique_assignments if item.required]
             pending = [item for item in required if item.state not in COMPLETED_TASK_STATES]
             completed = [item for item in unique_assignments if item.state in {"completed", "validated"}]
-            compliance = evaluate_compliance(checked_in, len(pending), is_off=is_off, late=late)
+            if classified.get("excused") and not checked_in:
+                compliance = {"compliant": len(pending) == 0, "issues": ["Tareas pendientes"] if pending else []}
+            else:
+                compliance = evaluate_compliance(checked_in, len(pending), is_off=is_off, late=late)
+            issues = list(dict.fromkeys([*(classified.get("labels") or []), *compliance["issues"]]))
+            if classified.get("excused") and not checked_in:
+                issues = [item for item in issues if item not in {"Faltó", "Sin check-in"}]
+                if not issues:
+                    issues = ["Permiso"]
 
             rows.append({
                 "employee_id": employee.id,
@@ -133,18 +145,22 @@ class ReportService:
                 "schedule_label": emp_window.get("label"),
                 "is_off": is_off,
                 "late": late,
+                "labels": classified.get("labels") or [],
+                "excused": classified.get("excused") or False,
                 "tasks_assigned": len(unique_assignments),
                 "tasks_completed": len(completed),
                 "tasks_pending": len(pending),
                 "pending_task_names": [templates.get(item.template_id, f"#{item.template_id}") for item in pending],
-                "compliant": compliance["compliant"],
-                "issues": compliance["issues"],
+                "compliant": compliance["compliant"] and not classified.get("has_issue"),
+                "issues": issues,
             })
 
         summary = {
             "total_employees": len(rows),
             "checked_in": sum(1 for row in rows if row["checked_in"]),
-            "missing_checkin": sum(1 for row in rows if not row["checked_in"] and not row.get("is_off")),
+            "missing_checkin": sum(1 for row in rows if not row["checked_in"] and not row.get("is_off") and not row.get("excused")),
+            "missing_checkout": sum(1 for row in rows if "No marcó salida" in (row.get("labels") or [])),
+            "excused": sum(1 for row in rows if row.get("excused")),
             "tasks_incomplete": sum(1 for row in rows if row["tasks_pending"] > 0),
             "compliant": sum(1 for row in rows if row["compliant"]),
             "non_compliant": sum(1 for row in rows if not row["compliant"]),

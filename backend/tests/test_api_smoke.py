@@ -215,6 +215,9 @@ def test_health_and_full_admin_kiosk_cycle():
         "device_code": "KIOSK-DEMO",
     }))
     assert face["success"] is False
+    assert not face.get("access_token")
+    calendar = _ok(*_call("GET", "/api/reports/calendar", token=token))
+    assert calendar["days"]
 
     _ok(*_call("POST", "/api/kiosk/identify-pin", {"device_code": "KIOSK-DEMO", "pin": "0000"}), 401)
     too_soon_status, too_soon = _call("POST", "/api/kiosk/identify-pin", {"device_code": "KIOSK-DEMO", "pin": "0000"})

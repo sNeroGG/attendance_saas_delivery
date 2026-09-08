@@ -1,8 +1,37 @@
+from contextlib import asynccontextmanager
+import threading
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.routes import assignments, attendance, auth, branches, companies, departments, devices, employee_statuses, employees, jobs, kiosk, no_attendance, permissions, phase4, roles, rules, schedules, users, temporary_pins
+
+
+def run_auto_checkout_loop(stop: threading.Event) -> None:
+    from app.database import SessionLocal
+    from app.services.auto_checkout import process_all_companies
+    while True:
+        try:
+            db = SessionLocal()
+            try:
+                process_all_companies(db)
+            finally:
+                db.close()
+        except Exception as exc:
+            print(f"[auto-checkout] {exc}")
+        if stop.wait(300):
+            break
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    stop = threading.Event()
+    thread = threading.Thread(target=run_auto_checkout_loop, args=(stop,), daemon=True, name="auto-checkout")
+    thread.start()
+    yield
+    stop.set()
+
 
 settings = get_settings()
 docs_url = "/docs" if settings.environment == "development" else None
@@ -13,6 +42,7 @@ app = FastAPI(
     version="0.1.0",
     docs_url=docs_url,
     redoc_url=redoc_url,
+    lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware,

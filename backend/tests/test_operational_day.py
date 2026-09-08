@@ -42,8 +42,9 @@ def test_window_in_morning_gap_uses_closed_shift():
 
 def test_auto_close_after_three_am():
     check_in = _utc(2026, 8, 12, 18, 0)  # 12:00 SV
-    assert not should_auto_close(check_in, _utc(2026, 8, 13, 8, 0))  # 02:00 SV
-    assert should_auto_close(check_in, _utc(2026, 8, 13, 9, 0))  # 03:00 SV
+    assert not should_auto_close(check_in, _utc(2026, 8, 13, 9, 0))  # 03:00 SV
+    assert not should_auto_close(check_in, _utc(2026, 8, 13, 9, 59))  # 03:59 SV
+    assert should_auto_close(check_in, _utc(2026, 8, 13, 10, 0))  # 04:00 SV
 
 
 def test_compliance_requires_checkin_and_tasks():

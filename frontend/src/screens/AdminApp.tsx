@@ -7,9 +7,12 @@ import {
   LayoutDashboard,
   ListChecks,
   LogOut,
+  Clock,
+  CalendarDays,
   MonitorSmartphone,
   Plus,
   RefreshCw,
+  Shield,
   ShieldCheck,
   UserRound,
   Users,
@@ -23,12 +26,15 @@ type ScreenKey =
   | 'dashboard'
   | 'reports'
   | 'employees'
+  | 'schedules'
+  | 'calendar'
   | 'tasks'
   | 'active'
   | 'users'
   | 'devices'
   | 'company'
-  | 'pin';
+  | 'pin'
+  | 'security';
 
 type DailyReport = {
   operational_day: { start: string; end: string; shift_window: string };
@@ -36,6 +42,8 @@ type DailyReport = {
     total_employees: number;
     checked_in: number;
     missing_checkin: number;
+    missing_checkout?: number;
+    excused?: number;
     tasks_incomplete: number;
     compliant: number;
     non_compliant: number;
@@ -60,6 +68,11 @@ type DailyEmployee = {
   pending_task_names: string[];
   compliant: boolean;
   issues: string[];
+  schedule_label?: string | null;
+  is_off?: boolean;
+  late?: boolean;
+  labels?: string[];
+  excused?: boolean;
 };
 
 type ActiveNow = {
@@ -81,9 +94,12 @@ type Employee = {
   is_active_for_work?: boolean;
   user_login?: string;
   user_pin?: string;
+  role_id?: number | null;
+  role_name?: string | null;
 };
 
-type Template = { id: number; name: string; description?: string | null; active?: boolean; state?: string };
+type TemplateTask = { id?: number; name: string; description?: string | null; sequence?: number };
+type Template = { id: number; name: string; description?: string | null; active?: boolean; state?: string; tasks?: TemplateTask[] };
 type Assignment = {
   id: number;
   employee_id: number;
@@ -118,6 +134,7 @@ type Company = {
   name: string;
   email?: string | null;
   phone?: string | null;
+  device_lock_enabled?: boolean;
 };
 type LedgerEntry = {
   at: string;
@@ -136,10 +153,13 @@ const NAV: { key: ScreenKey; label: string; icon: ReactNode; group: 'main' | 'op
   { key: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard />, group: 'main' },
   { key: 'reports', label: 'Reportes del día', icon: <ClipboardList />, group: 'main' },
   { key: 'employees', label: 'Empleados', icon: <UsersRound />, group: 'main' },
+  { key: 'schedules', label: 'Horarios', icon: <Clock />, group: 'main' },
+  { key: 'calendar', label: 'Calendario', icon: <CalendarDays />, group: 'main' },
   { key: 'tasks', label: 'Asignar tareas', icon: <ListChecks />, group: 'main' },
   { key: 'active', label: 'Empleados activos', icon: <Users />, group: 'main' },
   { key: 'users', label: 'Usuarios', icon: <UserRound />, group: 'main' },
   { key: 'devices', label: 'Dispositivos', icon: <MonitorSmartphone />, group: 'ops' },
+  { key: 'security', label: 'Seguridad', icon: <Shield />, group: 'ops' },
   { key: 'pin', label: 'PIN gerente', icon: <ShieldCheck />, group: 'ops' },
   { key: 'company', label: 'Empresa', icon: <Building2 />, group: 'ops' },
 ];
@@ -280,9 +300,13 @@ function DashboardScreen({ onNavigate }: { onNavigate: (key: ScreenKey) => void 
           <span>Presentes ahora</span>
           <strong>{data?.active_now?.length ?? 0}</strong>
         </button>
-        <button className="metric-card" type="button" onClick={() => onNavigate('reports')}>
+        <button className="metric-card" type="button" onClick={() => onNavigate('calendar')}>
           <span>Sin check-in</span>
           <strong>{summary?.missing_checkin ?? 0}</strong>
+        </button>
+        <button className="metric-card" type="button" onClick={() => onNavigate('calendar')}>
+          <span>No marcó salida</span>
+          <strong>{summary?.missing_checkout ?? 0}</strong>
         </button>
         <button className="metric-card" type="button" onClick={() => onNavigate('tasks')}>
           <span>Tareas pendientes</span>
@@ -396,6 +420,7 @@ function ReportsScreen() {
             <thead>
               <tr>
                 <th>Empleado</th>
+                <th>Horario</th>
                 <th>Check-in</th>
                 <th>Check-out</th>
                 <th>Tareas</th>
@@ -409,6 +434,7 @@ function ReportsScreen() {
                     <strong>{item.name}</strong>
                     <div className="cell-sub">{item.employee_code || 'Sin código'}</div>
                   </td>
+                  <td>{item.is_off ? 'Día libre' : (item.schedule_label || '—')}</td>
                   <td>{item.checked_in ? fmtTimeSV(item.check_in_at) : 'Sin check-in'}</td>
                   <td>{item.check_out_at ? fmtTimeSV(item.check_out_at) : item.checked_in ? 'En turno' : '—'}</td>
                   <td>
@@ -422,7 +448,7 @@ function ReportsScreen() {
                   </td>
                 </tr>
               ))}
-              {!people.length && <tr><td colSpan={5}>Sin empleados activos para esta jornada.</td></tr>}
+              {!people.length && <tr><td colSpan={6}>Sin empleados activos para esta jornada.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -432,9 +458,10 @@ function ReportsScreen() {
 }
 
 function EmployeesScreen() {
-  const emptyForm = { name: '', user_pin: '', mobile_phone: '', work_email: '', task_template_ids: [] as number[] };
+  const emptyForm = { name: '', user_pin: '', mobile_phone: '', work_email: '', role_id: '', task_template_ids: [] as number[] };
   const [items, setItems] = useState<Employee[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [roles, setRoles] = useState<{ id: number; name: string }[]>([]);
   const [editing, setEditing] = useState<Employee | null>(null);
   const [creating, setCreating] = useState(false);
   const [ledgerOpen, setLedgerOpen] = useState(false);
@@ -447,12 +474,14 @@ function EmployeesScreen() {
   async function load() {
     setError('');
     try {
-      const [employees, tpls] = await Promise.all([
+      const [employees, tpls, roleRows] = await Promise.all([
         api.request<Employee[]>('/employees'),
         api.request<Template[]>('/assignment-templates'),
+        api.request<{ id: number; name: string }[]>('/roles'),
       ]);
       setItems(employees);
       setTemplates(tpls.filter((item) => item.active !== false));
+      setRoles(roleRows);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo cargar empleados');
     }
@@ -475,6 +504,7 @@ function EmployeesScreen() {
       user_pin: item.user_pin || '',
       mobile_phone: item.mobile_phone || '',
       work_email: item.work_email || '',
+      role_id: item.role_id ? String(item.role_id) : '',
       task_template_ids: [],
     });
     setFormError('');
@@ -498,6 +528,7 @@ function EmployeesScreen() {
             user_pin: form.user_pin.trim() || null,
             mobile_phone: form.mobile_phone.trim() || null,
             work_email: form.work_email.trim() || null,
+            role_id: form.role_id ? Number(form.role_id) : null,
           }),
         });
         if (form.task_template_ids.length) {
@@ -520,6 +551,7 @@ function EmployeesScreen() {
             user_pin: form.user_pin.trim(),
             mobile_phone: form.mobile_phone.trim() || null,
             work_email: form.work_email.trim() || null,
+            role_id: form.role_id ? Number(form.role_id) : null,
             task_template_ids: form.task_template_ids,
           }),
         });
@@ -558,7 +590,7 @@ function EmployeesScreen() {
     <>
       <Header
         title="Empleados"
-        subtitle="Clic en una fila para editar. Tipo, sucursal, puesto y horario se asignan solos."
+        subtitle="Clic en una fila para editar. Tipo, sucursal y puesto se asignan solos. El horario se define en Horarios."
         actions={
           <button className="primary" type="button" onClick={openCreate}>
             <Plus size={14} /> Crear empleado
@@ -574,6 +606,7 @@ function EmployeesScreen() {
                 <th>Nombre</th>
                 <th>Código</th>
                 <th>Puesto</th>
+                <th>Rol</th>
                 <th>PIN</th>
                 <th></th>
               </tr>
@@ -584,6 +617,7 @@ function EmployeesScreen() {
                   <td><strong>{item.name}</strong></td>
                   <td>{item.employee_code || '—'}</td>
                   <td>{item.job_title || 'Colaborador'}</td>
+                  <td>{item.role_name || '—'}</td>
                   <td>{item.user_pin || '—'}</td>
                   <td>
                     <div className="table-actions">
@@ -593,7 +627,7 @@ function EmployeesScreen() {
                   </td>
                 </tr>
               ))}
-              {!items.length && <tr><td colSpan={5}>No hay empleados. Crea el primero con el botón superior.</td></tr>}
+              {!items.length && <tr><td colSpan={6}>No hay empleados. Crea el primero con el botón superior.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -605,7 +639,7 @@ function EmployeesScreen() {
           onClose={closeForm}
           onSubmit={submit}
           submitLabel={editing ? 'Guardar cambios' : 'Guardar empleado'}
-          hint={editing ? 'El horario 11:00–03:00 y el tipo de empleado se mantienen.' : 'Se crea con tipo fijo, usuario de acceso, sucursal y horario 11:00–03:00.'}
+          hint={editing ? 'El tipo de empleado se mantiene. El horario se asigna en Horarios.' : 'Se crea con tipo fijo, usuario de acceso y sucursal. El horario predeterminado se asigna en Horarios.'}
           error={formError}
         >
           <label className="field">
@@ -630,6 +664,15 @@ function EmployeesScreen() {
           <label className="field">
             <span>Email (opcional)</span>
             <input type="email" value={form.work_email} onChange={(event) => setForm({ ...form, work_email: event.target.value })} />
+          </label>
+          <label className="field">
+            <span>Rol</span>
+            <select value={form.role_id} onChange={(event) => setForm({ ...form, role_id: event.target.value })}>
+              <option value="">Sin rol (usa horario predeterminado)</option>
+              {roles.map((role) => (
+                <option key={role.id} value={role.id}>{role.name}</option>
+              ))}
+            </select>
           </label>
           <fieldset className="field">
             <span>{editing ? 'Agregar tareas' : 'Tareas iniciales'}</span>
@@ -668,7 +711,7 @@ function TasksScreen() {
   const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
   const [employeeId, setEmployeeId] = useState('');
   const [templateId, setTemplateId] = useState('');
-  const [templateForm, setTemplateForm] = useState({ name: '', description: '' });
+  const [templateForm, setTemplateForm] = useState({ name: '', tasks: [{ name: '', description: '' }] });
   const [error, setError] = useState('');
   const [formError, setFormError] = useState('');
 
@@ -699,16 +742,28 @@ function TasksScreen() {
 
   function openCreateTemplate() {
     setEditingTemplate(null);
-    setTemplateForm({ name: '', description: '' });
+    setTemplateForm({ name: '', tasks: [{ name: '', description: '' }] });
     setFormError('');
     setTemplateOpen(true);
   }
 
-  function openEditTemplate(item: Template) {
+  async function openEditTemplate(item: Template) {
     setEditingTemplate(item);
-    setTemplateForm({ name: item.name, description: item.description || '' });
     setFormError('');
     setTemplateOpen(true);
+    const tasks = (item.tasks && item.tasks.length)
+      ? item.tasks.map((task) => ({ name: task.name, description: task.description || '' }))
+      : [{ name: '', description: '' }];
+    setTemplateForm({ name: item.name, tasks });
+    try {
+      const detail = await api.request<Template>(`/assignment-templates/${item.id}`);
+      const loaded = (detail.tasks && detail.tasks.length)
+        ? detail.tasks.map((task) => ({ name: task.name, description: task.description || '' }))
+        : tasks;
+      setTemplateForm({ name: detail.name, tasks: loaded });
+    } catch {
+      setTemplateForm({ name: item.name, tasks });
+    }
   }
 
   async function assign(event: FormEvent) {
@@ -739,10 +794,17 @@ function TasksScreen() {
     try {
       const payload = {
         name: templateForm.name.trim(),
-        description: templateForm.description.trim() || null,
+        description: null,
         state: 'active',
         active: true,
+        tasks: templateForm.tasks
+          .map((task) => ({ name: task.name.trim(), description: task.description.trim() || null }))
+          .filter((task) => task.name),
       };
+      if (!payload.tasks.length) {
+        setFormError('Agrega al menos una tarea en la cadena');
+        return;
+      }
       if (editingTemplate) {
         await api.request(`/assignment-templates/${editingTemplate.id}`, { method: 'PUT', body: JSON.stringify(payload) });
       } else {
@@ -776,7 +838,7 @@ function TasksScreen() {
             <thead>
               <tr>
                 <th>Nombre</th>
-                <th>Descripción</th>
+                <th>Tareas</th>
                 <th></th>
               </tr>
             </thead>
@@ -784,7 +846,7 @@ function TasksScreen() {
               {templates.map((item) => (
                 <tr key={item.id} className="click-row" onClick={() => openEditTemplate(item)}>
                   <td><strong>{item.name}</strong></td>
-                  <td>{item.description || '—'}</td>
+                  <td>{item.tasks?.length ? `${item.tasks.length} en cadena` : 'Sin tareas'}</td>
                   <td>
                     <div className="table-actions">
                       <button className="ghost" type="button" onClick={(event) => { event.stopPropagation(); openEditTemplate(item); }}>Editar</button>
@@ -854,17 +916,68 @@ function TasksScreen() {
           onClose={() => { setTemplateOpen(false); setEditingTemplate(null); }}
           onSubmit={saveTemplate}
           submitLabel={editingTemplate ? 'Guardar cambios' : 'Guardar plantilla'}
-          hint="Queda activa y lista para asignarse a cualquier empleado."
+          hint="En el kiosko esta plantilla se muestra como una sección con las tareas en checklist."
           error={formError}
         >
           <label className="field">
-            <span>Nombre</span>
-            <input value={templateForm.name} onChange={(event) => setTemplateForm({ ...templateForm, name: event.target.value })} required placeholder="Ej. Apertura de sucursal" />
+            <span>Nombre de plantilla</span>
+            <input value={templateForm.name} onChange={(event) => setTemplateForm({ ...templateForm, name: event.target.value })} required placeholder="Ej. Limpieza" />
           </label>
-          <label className="field">
-            <span>Descripción (opcional)</span>
-            <textarea value={templateForm.description} onChange={(event) => setTemplateForm({ ...templateForm, description: event.target.value })} rows={3} />
-          </label>
+          <div className="field">
+            <span>Tareas en cadena</span>
+            <div className="task-chain">
+              {templateForm.tasks.map((task, index) => (
+                <div className="task-chain-item" key={index}>
+                  <div className="task-chain-head">
+                    <strong>Tarea {index + 1}</strong>
+                    {templateForm.tasks.length > 1 && (
+                      <button
+                        className="ghost"
+                        type="button"
+                        onClick={() => setTemplateForm({
+                          ...templateForm,
+                          tasks: templateForm.tasks.filter((_, taskIndex) => taskIndex !== index),
+                        })}
+                      >
+                        Quitar
+                      </button>
+                    )}
+                  </div>
+                  <label className="field">
+                    <span>Nombre de la tarea</span>
+                    <input
+                      value={task.name}
+                      onChange={(event) => {
+                        const tasks = templateForm.tasks.map((item, taskIndex) => taskIndex === index ? { ...item, name: event.target.value } : item);
+                        setTemplateForm({ ...templateForm, tasks });
+                      }}
+                      required={index === 0}
+                      placeholder="Ej. Revisar inventario"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Descripción de la tarea</span>
+                    <textarea
+                      value={task.description}
+                      onChange={(event) => {
+                        const tasks = templateForm.tasks.map((item, taskIndex) => taskIndex === index ? { ...item, description: event.target.value } : item);
+                        setTemplateForm({ ...templateForm, tasks });
+                      }}
+                      rows={2}
+                      placeholder="Qué debe hacer el empleado"
+                    />
+                  </label>
+                </div>
+              ))}
+            </div>
+            <button
+              className="ghost"
+              type="button"
+              onClick={() => setTemplateForm({ ...templateForm, tasks: [...templateForm.tasks, { name: '', description: '' }] })}
+            >
+              <Plus size={14} /> Agregar tarea
+            </button>
+          </div>
         </FormModal>
       )}
     </>
@@ -1316,6 +1429,80 @@ function CompanyScreen() {
   );
 }
 
+function SecurityScreen() {
+  const [enabled, setEnabled] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  async function load() {
+    try {
+      const data = await api.request<Company>('/companies/current');
+      setEnabled(data.device_lock_enabled !== false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo cargar la configuración');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function toggle(next: boolean) {
+    const previous = enabled;
+    setEnabled(next);
+    setSaving(true);
+    setError('');
+    try {
+      const updated = await api.request<Company>('/companies/current', {
+        method: 'PUT',
+        body: JSON.stringify({ device_lock_enabled: next }),
+      });
+      setEnabled(updated.device_lock_enabled !== false);
+    } catch (err) {
+      setEnabled(previous);
+      setError(err instanceof Error ? err.message : 'No se pudo guardar');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <Header
+        title="Seguridad"
+        subtitle="Políticas de acceso en kiosko y dispositivos."
+      />
+      {error && <div className="error">{error}</div>}
+      <section className="panel">
+        {loading ? (
+          <div className="record-card"><p className="subtle">Cargando...</p></div>
+        ) : (
+          <div className="setting-row">
+            <div>
+              <h2>Dispositivos fijados</h2>
+              <p className="subtle">
+                Si está activo, cada dispositivo queda vinculado al primer colaborador que marque asistencia.
+                Solo esa persona puede usarlo hasta que un gerente lo desvincule.
+              </p>
+            </div>
+            <label className="switch">
+              <input
+                type="checkbox"
+                checked={enabled}
+                disabled={saving}
+                onChange={(event) => toggle(event.target.checked)}
+                aria-label="Dispositivos fijados"
+              />
+              <span />
+            </label>
+          </div>
+        )}
+      </section>
+    </>
+  );
+}
+
 function PinScreen() {
   const [pin, setPin] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
@@ -1360,6 +1547,545 @@ function PinScreen() {
   );
 }
 
+const WEEKDAY_LABELS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+
+type ScheduleLine = { weekday: number; start_time: string; end_time: string; is_off: boolean; overnight: boolean };
+type WorkSchedule = {
+  id: number;
+  name: string;
+  description?: string | null;
+  is_default: boolean;
+  active: boolean;
+  lines: ScheduleLine[];
+};
+type RoleSchedule = { id: number; name: string; schedule_id: number | null; schedule_name: string | null };
+type EmployeeSchedule = {
+  id: number;
+  name: string;
+  employee_code?: string | null;
+  job_title?: string | null;
+  role_name?: string | null;
+  schedule_id: number | null;
+  resolved_schedule_id: number | null;
+  resolved_schedule_name: string | null;
+  source: string;
+};
+
+function defaultScheduleLines(): ScheduleLine[] {
+  return WEEKDAY_LABELS.map((_, weekday) => ({
+    weekday,
+    start_time: '11:00',
+    end_time: '03:00',
+    is_off: false,
+    overnight: true,
+  }));
+}
+
+function sourceLabel(source: string) {
+  if (source === 'employee') return 'Empleado';
+  if (source === 'role') return 'Rol';
+  return 'Predeterminado';
+}
+
+function SchedulesScreen() {
+  const [schedules, setSchedules] = useState<WorkSchedule[]>([]);
+  const [roles, setRoles] = useState<RoleSchedule[]>([]);
+  const [employees, setEmployees] = useState<EmployeeSchedule[]>([]);
+  const [error, setError] = useState('');
+  const [formError, setFormError] = useState('');
+  const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<WorkSchedule | null>(null);
+  const [form, setForm] = useState({ name: '', description: '', is_default: false, lines: defaultScheduleLines() });
+
+  async function load() {
+    setError('');
+    try {
+      const data = await api.request<{
+        schedules: WorkSchedule[];
+        roles: RoleSchedule[];
+        employees: EmployeeSchedule[];
+      }>('/work-schedules/overview');
+      setSchedules(data.schedules);
+      setRoles(data.roles);
+      setEmployees(data.employees);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudieron cargar los horarios');
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  function openCreate() {
+    setEditing(null);
+    setForm({ name: '', description: '', is_default: false, lines: defaultScheduleLines() });
+    setFormError('');
+    setCreating(true);
+  }
+
+  function openEdit(item: WorkSchedule) {
+    setCreating(false);
+    setEditing(item);
+    const lines = defaultScheduleLines().map((line) => {
+      const current = (item.lines || []).find((entry) => entry.weekday === line.weekday);
+      return current ? { ...line, ...current, weekday: line.weekday } : line;
+    });
+    setForm({
+      name: item.name,
+      description: item.description || '',
+      is_default: item.is_default,
+      lines,
+    });
+    setFormError('');
+  }
+
+  function closeForm() {
+    setCreating(false);
+    setEditing(null);
+    setFormError('');
+  }
+
+  function updateLine(weekday: number, patch: Partial<ScheduleLine>) {
+    setForm((current) => ({
+      ...current,
+      lines: current.lines.map((line) => {
+        if (line.weekday !== weekday) return line;
+        const next = { ...line, ...patch };
+        next.overnight = next.end_time < next.start_time;
+        return next;
+      }),
+    }));
+  }
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    setFormError('');
+    try {
+      const payload = {
+        name: form.name.trim(),
+        description: form.description.trim() || null,
+        is_default: form.is_default,
+        active: true,
+        lines: form.lines,
+      };
+      if (editing) {
+        await api.request(`/work-schedules/${editing.id}`, { method: 'PUT', body: JSON.stringify(payload) });
+      } else {
+        await api.request('/work-schedules', { method: 'POST', body: JSON.stringify(payload) });
+      }
+      closeForm();
+      await load();
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'No se pudo guardar el horario');
+    }
+  }
+
+  async function makeDefault(item: WorkSchedule) {
+    try {
+      await api.request(`/work-schedules/${item.id}/set-default`, { method: 'POST', body: JSON.stringify({}) });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo marcar como predeterminado');
+    }
+  }
+
+  async function assignRole(roleId: number, scheduleId: string) {
+    try {
+      await api.request(`/work-schedules/roles/${roleId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ schedule_id: scheduleId ? Number(scheduleId) : null }),
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo asignar el horario al rol');
+    }
+  }
+
+  async function assignEmployee(employeeId: number, scheduleId: string) {
+    try {
+      await api.request(`/work-schedules/employees/${employeeId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ schedule_id: scheduleId ? Number(scheduleId) : null }),
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo asignar el horario al empleado');
+    }
+  }
+
+  const formOpen = creating || editing !== null;
+
+  return (
+    <>
+      <Header
+        title="Horarios"
+        subtitle="Predeterminado de la empresa, por rol o por empleado. El empleado tiene prioridad sobre el rol."
+        actions={<button className="primary" type="button" onClick={openCreate}><Plus size={14} /> Crear horario</button>}
+      />
+      {error && <div className="error">{error}</div>}
+      <section className="panel">
+        <div className="panel-header"><strong>Plantillas de horario</strong></div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Jornada</th>
+                <th>Uso</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {schedules.map((item) => {
+                const workDays = (item.lines || []).filter((line) => !line.is_off);
+                const sample = workDays[0];
+                return (
+                  <tr key={item.id} className="click-row" onClick={() => openEdit(item)}>
+                    <td><strong>{item.name}</strong></td>
+                    <td>{sample ? `${sample.start_time} – ${sample.end_time}` : '—'}</td>
+                    <td>{item.is_default ? <StatusPill ok label="Predeterminado" /> : 'Opcional'}</td>
+                    <td>
+                      <div className="table-actions">
+                        <button className="ghost" type="button" onClick={(event) => { event.stopPropagation(); openEdit(item); }}>Editar</button>
+                        {!item.is_default && (
+                          <button className="ghost" type="button" onClick={(event) => { event.stopPropagation(); makeDefault(item); }}>Usar por defecto</button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {!schedules.length && <tr><td colSpan={4}>No hay horarios. Crea el primero con el botón superior.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className="panel">
+        <div className="panel-header"><strong>Por rol</strong></div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Rol</th>
+                <th>Horario</th>
+              </tr>
+            </thead>
+            <tbody>
+              {roles.map((role) => (
+                <tr key={role.id}>
+                  <td><strong>{role.name}</strong></td>
+                  <td>
+                    <select value={role.schedule_id ? String(role.schedule_id) : ''} onChange={(event) => assignRole(role.id, event.target.value)}>
+                      <option value="">Predeterminado de empresa</option>
+                      {schedules.map((item) => (
+                        <option key={item.id} value={item.id}>{item.name}</option>
+                      ))}
+                    </select>
+                  </td>
+                </tr>
+              ))}
+              {!roles.length && <tr><td colSpan={2}>No hay roles. El horario predeterminado se aplica a todos.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <section className="panel">
+        <div className="panel-header"><strong>Por empleado</strong></div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Empleado</th>
+                <th>Origen</th>
+                <th>Horario efectivo</th>
+                <th>Asignar</th>
+              </tr>
+            </thead>
+            <tbody>
+              {employees.map((item) => (
+                <tr key={item.id}>
+                  <td>
+                    <strong>{item.name}</strong>
+                    <div className="subtle">{item.role_name || item.job_title || 'Sin rol'}</div>
+                  </td>
+                  <td>{sourceLabel(item.source)}</td>
+                  <td>{item.resolved_schedule_name || '—'}</td>
+                  <td>
+                    <select value={item.schedule_id ? String(item.schedule_id) : ''} onChange={(event) => assignEmployee(item.id, event.target.value)}>
+                      <option value="">Heredar (rol o predeterminado)</option>
+                      {schedules.map((schedule) => (
+                        <option key={schedule.id} value={schedule.id}>{schedule.name}</option>
+                      ))}
+                    </select>
+                  </td>
+                </tr>
+              ))}
+              {!employees.length && <tr><td colSpan={4}>No hay empleados para asignar horario.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {formOpen && (
+        <FormModal
+          title={editing ? 'Editar horario' : 'Nuevo horario'}
+          onClose={closeForm}
+          onSubmit={submit}
+          submitLabel={editing ? 'Guardar cambios' : 'Guardar horario'}
+          hint="Si un empleado no tiene horario propio, usa el del rol; si el rol tampoco, usa el predeterminado."
+          error={formError}
+        >
+          <label className="field">
+            <span>Nombre</span>
+            <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required placeholder="Ej. Jornada 11:00–03:00" />
+          </label>
+          <label className="field">
+            <span>Descripción</span>
+            <input value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Opcional" />
+          </label>
+          <label className="field" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input type="checkbox" checked={form.is_default} onChange={(event) => setForm({ ...form, is_default: event.target.checked })} style={{ width: 16, height: 16, minHeight: 16 }} />
+            <span>Usar como predeterminado de la empresa</span>
+          </label>
+          <div className="schedule-days">
+            {form.lines.map((line) => (
+              <div className="schedule-day" key={line.weekday}>
+                <strong>{WEEKDAY_LABELS[line.weekday]}</strong>
+                <label className="field">
+                  <span>Entrada</span>
+                  <input type="time" value={line.start_time} disabled={line.is_off} onChange={(event) => updateLine(line.weekday, { start_time: event.target.value })} />
+                </label>
+                <label className="field">
+                  <span>Salida</span>
+                  <input type="time" value={line.end_time} disabled={line.is_off} onChange={(event) => updateLine(line.weekday, { end_time: event.target.value })} />
+                </label>
+                <label className="field" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input type="checkbox" checked={line.is_off} onChange={(event) => updateLine(line.weekday, { is_off: event.target.checked })} style={{ width: 16, height: 16, minHeight: 16 }} />
+                  <span>Libre</span>
+                </label>
+              </div>
+            ))}
+          </div>
+        </FormModal>
+      )}
+    </>
+  );
+}
+
+const CALENDAR_DAYS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+
+type CalendarWeekDay = {
+  date: string;
+  weekday: number;
+  status: 'ok' | 'issues';
+  status_label: string;
+  issue_count: number;
+  present: number;
+  absent: number;
+  missing_checkout: number;
+  late: number;
+  excused: number;
+  expected: number;
+};
+
+type CalendarLedgerEntry = {
+  at: string | null;
+  kind: string;
+  kind_label: string;
+  title: string;
+  detail?: string | null;
+  state?: string | null;
+};
+
+type CalendarEmployeeRow = {
+  employee_id: number;
+  name: string;
+  employee_code?: string | null;
+  job_title?: string | null;
+  labels: string[];
+  status_label: string;
+  has_issue: boolean;
+  excused: boolean;
+  is_off: boolean;
+  check_in_at: string | null;
+  check_out_at: string | null;
+  ledger: CalendarLedgerEntry[];
+};
+
+type CalendarDayDetail = CalendarWeekDay & { employees: CalendarEmployeeRow[] };
+
+function startOfWeek(value: Date) {
+  const date = new Date(value);
+  const day = (date.getDay() + 6) % 7;
+  date.setDate(date.getDate() - day);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function isoDate(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function CalendarScreen() {
+  const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date()));
+  const [days, setDays] = useState<CalendarWeekDay[]>([]);
+  const [selectedDate, setSelectedDate] = useState(() => isoDate(new Date()));
+  const [detail, setDetail] = useState<CalendarDayDetail | null>(null);
+  const [error, setError] = useState('');
+  const [busyId, setBusyId] = useState<number | null>(null);
+
+  async function loadWeek(start = weekStart) {
+    setError('');
+    const end = new Date(start);
+    end.setDate(end.getDate() + 6);
+    try {
+      const data = await api.request<{ days: CalendarWeekDay[] }>(`/reports/calendar?start=${isoDate(start)}&end=${isoDate(end)}`);
+      setDays(data.days);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo cargar el calendario');
+    }
+  }
+
+  async function loadDay(day = selectedDate) {
+    if (!day) return;
+    setError('');
+    try {
+      setDetail(await api.request<CalendarDayDetail>(`/reports/calendar/${day}`));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo cargar el día');
+    }
+  }
+
+  useEffect(() => { loadWeek(weekStart); }, [weekStart]);
+  useEffect(() => { loadDay(selectedDate); }, [selectedDate]);
+
+  async function grantPermission(employee: CalendarEmployeeRow) {
+    if (employee.excused || employee.is_off) return;
+    setBusyId(employee.employee_id);
+    setError('');
+    try {
+      await api.request('/no-attendance', {
+        method: 'POST',
+        body: JSON.stringify({
+          employee_id: employee.employee_id,
+          date: selectedDate,
+          reason: 'permiso',
+          note: 'Permiso de faltar',
+          state: 'approved',
+        }),
+      });
+      await loadDay(selectedDate);
+      await loadWeek(weekStart);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'No se pudo registrar el permiso');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <>
+      <Header
+        title="Calendario"
+        subtitle="Cada día muestra si todo está bien o si hubo faltas, tardanzas o salidas sin marcar."
+        actions={
+          <div className="header-actions">
+            <button className="ghost" type="button" onClick={() => setWeekStart((current) => { const next = new Date(current); next.setDate(next.getDate() - 7); return next; })}>Semana anterior</button>
+            <button className="ghost" type="button" onClick={() => { const today = startOfWeek(new Date()); setWeekStart(today); setSelectedDate(isoDate(new Date())); }}>Esta semana</button>
+            <button className="ghost" type="button" onClick={() => setWeekStart((current) => { const next = new Date(current); next.setDate(next.getDate() + 7); return next; })}>Semana siguiente</button>
+          </div>
+        }
+      />
+      {error && <div className="error">{error}</div>}
+      <section className="panel">
+        <div className="calendar-grid">
+          {days.map((day) => (
+            <button
+              key={day.date}
+              type="button"
+              className={`calendar-day ${day.status === 'ok' ? 'ok' : 'issues'}${selectedDate === day.date ? ' selected' : ''}`}
+              onClick={() => setSelectedDate(day.date)}
+            >
+              <strong>{CALENDAR_DAYS[day.weekday] || day.date}</strong>
+              <span className="subtle">{day.date.slice(8)}</span>
+              <span className={`calendar-status ${day.status}`}>{day.status_label}</span>
+              {day.status === 'issues' && (
+                <span className="subtle">
+                  {day.absent ? `${day.absent} faltó` : ''}{day.absent && day.missing_checkout ? ' · ' : ''}{day.missing_checkout ? `${day.missing_checkout} sin salida` : ''}{!day.absent && !day.missing_checkout && day.late ? `${day.late} tarde` : ''}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </section>
+      <section className="panel">
+        <div className="panel-header">
+          <strong>Bitácora del {selectedDate}</strong>
+          <StatusPill ok={detail?.status !== 'issues'} label={detail?.status_label || '—'} />
+        </div>
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Empleado</th>
+                <th>Estado</th>
+                <th>Entrada</th>
+                <th>Salida</th>
+                <th>Bitácora</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {(detail?.employees || []).map((employee) => (
+                <tr key={employee.employee_id}>
+                  <td>
+                    <strong>{employee.name}</strong>
+                    {employee.job_title ? <div className="subtle">{employee.job_title}</div> : null}
+                  </td>
+                  <td>
+                    <div className="label-stack">
+                      {employee.labels.map((label) => (
+                        <span key={label} className={`pill ${employee.has_issue && label !== 'Permiso' && label !== 'Día libre' && label !== 'Todo bien' && label !== 'En jornada' && label !== 'Pendiente' && label !== 'Aún no inicia' ? 'pill-warn' : 'pill-ok'}`}>{label}</span>
+                      ))}
+                    </div>
+                  </td>
+                  <td>{employee.check_in_at ? fmtTimeSV(employee.check_in_at) : '—'}</td>
+                  <td>{employee.check_out_at ? fmtTimeSV(employee.check_out_at) : '—'}</td>
+                  <td>
+                    {employee.ledger.length ? (
+                      <ul className="mini-ledger">
+                        {employee.ledger.map((entry, index) => (
+                          <li key={`${employee.employee_id}-${index}`}>
+                            <strong>{entry.title}</strong>
+                            <span>{entry.detail || entry.kind_label}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : <span className="subtle">Sin movimientos</span>}
+                  </td>
+                  <td>
+                    {!employee.is_off && !employee.excused && !employee.check_in_at ? (
+                      <button className="ghost" type="button" disabled={busyId === employee.employee_id} onClick={() => grantPermission(employee)}>
+                        Dar permiso
+                      </button>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+              {!detail?.employees?.length && (
+                <tr>
+                  <td colSpan={6}><p className="empty">No hay empleados para este día.</p></td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </>
+  );
+}
+
 export function AdminShell({ user, onLogout }: { user: ApiUser; onLogout: () => void }) {
   const [screen, setScreen] = useState<ScreenKey>('dashboard');
   const main = useMemo(() => NAV.filter((item) => item.group === 'main'), []);
@@ -1399,10 +2125,13 @@ export function AdminShell({ user, onLogout }: { user: ApiUser; onLogout: () => 
         {screen === 'dashboard' && <DashboardScreen onNavigate={setScreen} />}
         {screen === 'reports' && <ReportsScreen />}
         {screen === 'employees' && <EmployeesScreen />}
+        {screen === 'schedules' && <SchedulesScreen />}
+        {screen === 'calendar' && <CalendarScreen />}
         {screen === 'tasks' && <TasksScreen />}
         {screen === 'active' && <ActiveScreen />}
         {screen === 'users' && <UsersScreen />}
         {screen === 'devices' && <DevicesScreen />}
+        {screen === 'security' && <SecurityScreen />}
         {screen === 'company' && <CompanyScreen />}
         {screen === 'pin' && <PinScreen />}
       </main>

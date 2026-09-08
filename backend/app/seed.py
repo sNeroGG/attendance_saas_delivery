@@ -11,7 +11,7 @@ PERMISSIONS = {
         "employee.create", "employee.read", "employee.update", "employee.deactivate", "employee.change_status", "employee.rehire", "employee.assign_role", "employee.assign_branch",
     ],
     "Attendance": [
-        "attendance.own_check_in", "attendance.own_check_out", "attendance.view_own", "attendance.view_team", "attendance.view_all", "attendance.edit_own", "attendance.edit_team", "attendance.edit_all",
+        "attendance.own_check_in", "attendance.own_check_out", "attendance.view_own", "attendance.view_team", "attendance.view_all", "attendance.edit_own", "attendance.edit_team", "attendance.edit_all", "attendance.excuse_absence",
     ],
     "Roles": ["role.create", "role.update", "role.assign_permission", "role.assign_employee"],
     "Admin": ["company.update", "branch.create", "branch.update", "device.create", "device.update", "system.settings"],

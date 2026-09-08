@@ -309,4 +309,5 @@ def should_auto_close_shift(db: Session, company_id: int, employee: HrEmployee, 
     if end is None:
         from app.services.operational_day import should_auto_close
         return should_auto_close(check_in_at, moment)
-    return as_utc(moment) >= end
+    from app.services.operational_day import past_missing_checkout_deadline
+    return past_missing_checkout_deadline(end, moment)

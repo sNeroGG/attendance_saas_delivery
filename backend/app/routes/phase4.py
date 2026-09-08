@@ -1,3 +1,4 @@
+from datetime import date, timedelta
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -16,7 +17,7 @@ from app.schemas.phase4 import (
     SupervisorFaceValidationRequest,
 )
 from app.security.auth import get_current_user
-from app.security.rate_limit import check_rate_limit, clear_rate_limit
+from app.security.rate_limit import check_rate_limit
 from app.services.auto_checkout import AutoCheckoutService
 from app.services.face_recognition import FaceRecognitionService
 from app.services.reports import ReportService
@@ -48,43 +49,16 @@ def list_employee_face_templates(employee_id: int, db: Session = Depends(get_db)
 @router.post("/kiosk/identify-face", response_model=FaceIdentifyOut)
 def identify_face(payload: FaceImageRequest, request: Request, db: Session = Depends(get_db)):
     key = f"face:{payload.device_code or request.client.host if request.client else 'unknown'}"
-    if not check_rate_limit(key):
-        return FaceIdentifyOut(employee_id=None, employee_name=None, success=False, confidence_score=0)
-    from app.routes.kiosk import check_device_lock, get_device_by_code, kiosk_employee_payload
-    if not payload.device_code:
-        return FaceIdentifyOut(employee_id=None, employee_name=None, success=False, confidence_score=0)
-    device = get_device_by_code(db, payload.device_code)
-    company_id = device.company_id
-    employee, confidence = FaceRecognitionService(db, company_id).identify_face(payload.image_base64, payload.device_code, request.client.host if request.client else None)
-    
-    access_token = None
-    token_type = None
-    employee_data = None
-    user_data = None
-    
-    if employee:
-        check_device_lock(db, device, employee.id)
-        clear_rate_limit(key)
-        user = db.query(ResUser).filter_by(company_id=company_id, employee_id=employee.id, active=True).first()
-        if user:
-            from app.security.auth import create_access_token
-            access_token = create_access_token(user)
-            token_type = "bearer"
-            employee_data = kiosk_employee_payload(db, employee)
-            user_data = {
-                "id": user.id,
-                "name": user.name
-            }
-            
+    check_rate_limit(key)
     return FaceIdentifyOut(
-        employee_id=employee.id if employee else None,
-        employee_name=employee.name if employee else None,
-        success=employee is not None,
-        confidence_score=confidence,
-        access_token=access_token,
-        token_type=token_type,
-        employee=employee_data,
-        user=user_data
+        employee_id=None,
+        employee_name=None,
+        success=False,
+        confidence_score=0,
+        access_token=None,
+        token_type=None,
+        employee=None,
+        user=None,
     )
 
 
@@ -141,6 +115,22 @@ def report_attendance_exceptions(db: Session = Depends(get_db), user: ResUser = 
 
 
 # (Reporte biométrico eliminado)
+
+
+@router.get("/reports/calendar")
+def report_calendar(start: date | None = None, end: date | None = None, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    from app.services.day_board import DayBoardService
+    from app.services.operational_day import as_local
+    today = as_local().date()
+    start = start or (today - timedelta(days=today.weekday()))
+    end = end or (start + timedelta(days=6))
+    return DayBoardService(db, user.company_id).week(start, end)
+
+
+@router.get("/reports/calendar/{day}")
+def report_calendar_day(day: date, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    from app.services.day_board import DayBoardService
+    return DayBoardService(db, user.company_id).day_detail(day)
 
 
 @router.get("/reports/audit", response_model=ReportSummary)

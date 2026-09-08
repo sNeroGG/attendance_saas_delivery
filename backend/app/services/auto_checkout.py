@@ -1,10 +1,12 @@
 from datetime import datetime
 from sqlalchemy.orm import Session
 
-from app.models import HrEmployee, XAttendanceEventType, XAttendanceShift, XAutoCheckoutRule
+from app.models import HrEmployee, ResCompany, XAttendanceEventType, XAttendanceShift, XAutoCheckoutRule
 from app.services.attendance_logic import AttendanceLogicService
 from app.services.audit_log import AuditLogService
 from app.services.schedules import should_auto_close_shift
+
+MISSING_CHECKOUT_NOTE = "No marcó salida"
 
 
 class AutoCheckoutService:
@@ -33,23 +35,19 @@ class AutoCheckoutService:
             return 3
         return sorted(candidates, key=lambda item: (rank(item), item.id))[0] if candidates else None
 
-    def process_open_shifts(self) -> list[int]:
+    def process_open_shifts(self, moment: datetime | None = None) -> list[int]:
         closed: list[int] = []
         shifts = self.db.query(XAttendanceShift).filter_by(company_id=self.company_id, state="open").all()
         close_type = self.db.query(XAttendanceEventType).filter_by(company_id=self.company_id, closes_shift=True, active=True).first()
         if not close_type:
             return closed
         for shift in shifts:
-            rule = self.get_auto_checkout_rule(shift.employee_id, shift.branch_id)
-            if not rule:
-                continue
             employee = self.db.get(HrEmployee, shift.employee_id)
             if not employee:
                 continue
-            if not should_auto_close_shift(self.db, self.company_id, employee, shift.check_in_at):
+            if not should_auto_close_shift(self.db, self.company_id, employee, shift.check_in_at, moment):
                 continue
-            end_label = "fin de jornada"
-            self.auto_close_shift(shift.id, close_type.id, rule.note or f"Cierre automático al {end_label}")
+            self.auto_close_shift(shift.id, close_type.id, MISSING_CHECKOUT_NOTE)
             closed.append(shift.id)
         return closed
 
@@ -60,6 +58,29 @@ class AutoCheckoutService:
         close_type = self.db.get(XAttendanceEventType, event_type_id) if event_type_id else self.db.query(XAttendanceEventType).filter_by(company_id=self.company_id, closes_shift=True, active=True).first()
         if not close_type:
             return
-        AttendanceLogicService(self.db, self.company_id, self.user_id).create_attendance_event(shift.employee_id, close_type.id, "auto", None, datetime.utcnow(), note, None, "auto_checkout")
-        AuditLogService(self.db, self.company_id).record("auto_checkout", "x_attendance_shift", shift_id, user_id=self.user_id, employee_id=shift.employee_id, reason=note)
+        AttendanceLogicService(self.db, self.company_id, self.user_id).create_attendance_event(
+            shift.employee_id,
+            close_type.id,
+            "auto",
+            None,
+            datetime.utcnow(),
+            note or MISSING_CHECKOUT_NOTE,
+            None,
+            "auto_checkout",
+        )
+        AuditLogService(self.db, self.company_id).record(
+            "auto_checkout",
+            "x_attendance_shift",
+            shift_id,
+            user_id=self.user_id,
+            employee_id=shift.employee_id,
+            reason=note or MISSING_CHECKOUT_NOTE,
+        )
         self.db.commit()
+
+
+def process_all_companies(db: Session, moment: datetime | None = None) -> dict:
+    closed: list[int] = []
+    for company in db.query(ResCompany).all():
+        closed.extend(AutoCheckoutService(db, company.id).process_open_shifts(moment))
+    return {"closed_shift_ids": closed, "count": len(closed)}
