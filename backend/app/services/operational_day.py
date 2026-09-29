@@ -11,8 +11,8 @@ DEFAULT_EMPLOYEE_TYPE = "fixed"
 COMPLETED_TASK_STATES = {"completed", "validated", "cancelled"}
 KIND_LABELS = {
     "attendance": "Asistencia",
-    "task": "Tarea",
-    "task_answer": "Respuesta",
+    "task": "Checklist",
+    "task_answer": "Checklist",
     "audit": "Sistema",
     "biometric": "Acceso",
 }

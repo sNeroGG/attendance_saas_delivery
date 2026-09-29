@@ -1,11 +1,19 @@
 from contextlib import asynccontextmanager
+import logging
 import threading
+from pathlib import Path
 
-from fastapi import FastAPI
+from alembic.config import Config
+from alembic.runtime.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.config import get_settings
-from app.routes import assignments, attendance, auth, branches, companies, departments, devices, employee_statuses, employees, jobs, kiosk, no_attendance, permissions, phase4, roles, rules, schedules, users, temporary_pins
+from app.routes import assignments, attendance, auth, branches, companies, departments, devices, employee_statuses, employees, jobs, kiosk, no_attendance, permissions, phase4, roles, rules, schedules, setup, users, temporary_pins
+
+logger = logging.getLogger(__name__)
 
 
 def run_auto_checkout_loop(stop: threading.Event) -> None:
@@ -15,11 +23,17 @@ def run_auto_checkout_loop(stop: threading.Event) -> None:
         try:
             db = SessionLocal()
             try:
-                process_all_companies(db)
+                acquired = db.execute(text("SELECT GET_LOCK('attendance_saas:auto_checkout', 0)")).scalar()
+                if acquired == 1:
+                    try:
+                        process_all_companies(db)
+                    finally:
+                        db.rollback()
+                        db.execute(text("SELECT RELEASE_LOCK('attendance_saas:auto_checkout')"))
             finally:
                 db.close()
         except Exception as exc:
-            print(f"[auto-checkout] {exc}")
+            logger.exception("Auto-checkout scheduler iteration failed: %s", exc)
         if stop.wait(300):
             break
 
@@ -46,7 +60,7 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex="https?://.*",
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -70,11 +84,29 @@ app.include_router(assignments.router, prefix="/api")
 app.include_router(rules.router, prefix="/api")
 app.include_router(schedules.router, prefix="/api")
 app.include_router(temporary_pins.router, prefix="/api")
+app.include_router(setup.router, prefix="/api")
 app.include_router(phase4.router, prefix="/api")
 
 
 @app.get("/health")
 def health() -> dict:
+    from app.database import engine
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+            config_path = Path(__file__).resolve().parents[1] / "alembic.ini"
+            migration_config = Config(str(config_path))
+            migration_config.set_main_option("script_location", str(config_path.parent / "alembic"))
+            expected_heads = set(ScriptDirectory.from_config(migration_config).get_heads())
+            applied_heads = set(MigrationContext.configure(connection).get_current_heads())
+            if applied_heads != expected_heads:
+                raise RuntimeError("Database migrations are not at the application revision")
+        from app.security.rate_limit import redis_is_available
+        if not redis_is_available():
+            raise RuntimeError("Redis unavailable")
+    except Exception as exc:
+        logger.warning("Health check failed: dependency unavailable: %s", exc)
+        raise HTTPException(status_code=503, detail="Critical dependency unavailable") from exc
     return {"status": "ok", "service": "attendance_saas_backend"}
 
 

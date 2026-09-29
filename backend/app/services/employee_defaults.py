@@ -25,12 +25,14 @@ def _get_or_create(db: Session, model, company_id: int, user_id: int, defaults: 
     return record
 
 
-def resolve_org_defaults(db: Session, company_id: int, user_id: int) -> dict:
-    branch = _get_or_create(
-        db, XBranch, company_id, user_id,
-        {"timezone": "America/El_Salvador", "active": True},
-        name="Sucursal Principal",
-    )
+def resolve_org_defaults(db: Session, company_id: int, user_id: int, create_branch: bool = True) -> dict:
+    branch = db.query(XBranch).filter_by(company_id=company_id, active=True).order_by(XBranch.id).first()
+    if branch is None and create_branch:
+        branch = _get_or_create(
+            db, XBranch, company_id, user_id,
+            {"timezone": "America/Guatemala", "active": True},
+            name="Sucursal Principal",
+        )
     department = _get_or_create(
         db, HrDepartment, company_id, user_id,
         {"active": True},
@@ -50,7 +52,7 @@ def resolve_org_defaults(db: Session, company_id: int, user_id: int) -> dict:
         )
     ensure_default_schedule(db, company_id, user_id)
     return {
-        "branch_id": branch.id,
+        "branch_id": branch.id if branch else None,
         "department_id": department.id,
         "job_id": job.id,
         "job_title": job.name,

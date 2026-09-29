@@ -25,7 +25,7 @@ El portal del empleado está diseñado como una aplicación web móvil (mobile-f
 
 ---
 
-## 2. Panel de Administración (`/admindash`)
+## 2. Panel de Administración (`/ctrl-ops-7931` o `/admindash`)
 
 El Panel de Administración es la consola central del sistema donde los supervisores y administradores gestionan los catálogos, configuran las reglas operativas y auditan el comportamiento del sistema.
 

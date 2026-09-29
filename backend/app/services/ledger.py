@@ -14,6 +14,16 @@ from app.models import (
 from app.services.operational_day import KIND_LABELS
 
 
+ASSIGNMENT_STATE_LABELS = {
+    "pending": "Pendiente de completar",
+    "in_progress": "En progreso",
+    "completed": "Completado",
+    "validated": "Validado",
+    "validation_pending": "Por validar supervisor",
+    "rejected": "Rechazado",
+}
+
+
 def employee_ledger(db: Session, company_id: int, employee_id: int) -> dict:
     employee = db.query(HrEmployee).filter_by(id=employee_id, company_id=company_id).first()
     if not employee:
@@ -50,13 +60,13 @@ def employee_ledger(db: Session, company_id: int, employee_id: int) -> dict:
     assignment_ids = [item.id for item in assignments]
     templates = {item.id: item.name for item in db.query(XAssignmentTemplate).filter(XAssignmentTemplate.id.in_([a.template_id for a in assignments] or [0])).all()}
     for assignment in assignments:
-        template_name = templates.get(assignment.template_id, f"Plantilla #{assignment.template_id}")
+        template_name = templates.get(assignment.template_id, f"Checklist #{assignment.template_id}")
         entries.append({
             "at": assignment.assigned_at,
             "kind": "task",
             "kind_label": KIND_LABELS["task"],
-            "title": f"Tarea asignada: {template_name}",
-            "detail": f"Estado: {assignment.state}",
+            "title": f"Checklist asignado: {template_name}",
+            "detail": ASSIGNMENT_STATE_LABELS.get(assignment.state, assignment.state),
             "state": assignment.state,
         })
 
@@ -68,19 +78,29 @@ def employee_ledger(db: Session, company_id: int, employee_id: int) -> dict:
             .limit(200)
             .all()
         )
+        assignment_by_id = {item.id: item for item in assignments}
         for answer in answers:
             if not answer.answered_at:
                 continue
             question = db.get(XAssignmentQuestion, answer.question_id)
-            value = answer.answer_text or answer.answer_json or (
-                str(answer.answer_number) if answer.answer_number is not None else None
-            ) or ("Sí" if answer.answer_boolean else "No" if answer.answer_boolean is False else None)
+            assignment = assignment_by_id.get(answer.employee_assignment_id)
+            template_name = templates.get(assignment.template_id, "") if assignment else ""
+            if answer.answer_boolean is True or answer.state == "done":
+                detail = "El empleado marcó que sí lo hizo"
+            elif answer.answer_boolean is False:
+                detail = "Marcado como no realizado"
+            else:
+                detail = answer.answer_text or answer.answer_json or (
+                    str(answer.answer_number) if answer.answer_number is not None else "Sin detalle"
+                )
+            if template_name:
+                detail = f"{template_name} · {detail}"
             entries.append({
                 "at": answer.answered_at,
                 "kind": "task_answer",
                 "kind_label": KIND_LABELS["task_answer"],
-                "title": question.name if question else "Respuesta de tarea",
-                "detail": value or "Sin detalle",
+                "title": question.name if question else "Ítem de checklist",
+                "detail": detail,
                 "state": answer.state,
             })
 

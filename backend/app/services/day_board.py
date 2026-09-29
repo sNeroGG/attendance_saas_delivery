@@ -1,12 +1,18 @@
+import csv
 from datetime import date, datetime, timedelta
+from io import StringIO
 
 from sqlalchemy.orm import Session
 
 from app.models import (
     HrEmployee,
+    XAssignmentAnswer,
+    XAssignmentQuestion,
+    XAssignmentTemplate,
     XAttendanceEvent,
     XAttendanceEventType,
     XAttendanceShift,
+    XEmployeeAssignment,
     XNoAttendanceNote,
 )
 from app.services.operational_day import (
@@ -22,6 +28,35 @@ from app.services.operational_day import (
     classify_employee_day,
 )
 from app.services.schedules import resolve_employee_schedule, window_for_date
+
+CSV_FIELDS = [
+    "fecha",
+    "empleado",
+    "codigo",
+    "puesto",
+    "estado",
+    "etiquetas",
+    "entrada",
+    "salida",
+    "tarde",
+    "permiso",
+    "dia_libre",
+]
+
+
+def _csv_datetime(value: datetime | None) -> str:
+    if not value:
+        return ""
+    return as_local(value).strftime("%Y-%m-%d %H:%M")
+
+
+def calendar_csv(rows: list[dict]) -> str:
+    buffer = StringIO()
+    buffer.write("\ufeff")
+    writer = csv.DictWriter(buffer, fieldnames=CSV_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return buffer.getvalue()
 
 
 class DayBoardService:
@@ -137,6 +172,30 @@ class DayBoardService:
             cursor += timedelta(days=1)
         return {"start": start.isoformat(), "end": end.isoformat(), "days": days}
 
+    def export_rows(self, start: date, end: date, now: datetime | None = None) -> list[dict]:
+        rows: list[dict] = []
+        employees = self._employees()
+        cursor = start
+        while cursor <= end:
+            notes = self._notes_by_employee(cursor)
+            for employee in employees:
+                row = self.employee_row(employee, cursor, now, notes)
+                rows.append({
+                    "fecha": cursor.isoformat(),
+                    "empleado": row["name"],
+                    "codigo": row.get("employee_code") or "",
+                    "puesto": row.get("job_title") or "",
+                    "estado": row.get("status_label") or "",
+                    "etiquetas": "; ".join(row.get("labels") or []),
+                    "entrada": _csv_datetime(row.get("check_in_at")),
+                    "salida": _csv_datetime(row.get("check_out_at")),
+                    "tarde": "si" if row.get("late") else "",
+                    "permiso": "si" if row.get("excused") else "",
+                    "dia_libre": "si" if row.get("is_off") else "",
+                })
+            cursor += timedelta(days=1)
+        return rows
+
     def day_detail(self, day: date, now: datetime | None = None) -> dict:
         notes = self._notes_by_employee(day)
         rows = []
@@ -175,6 +234,7 @@ class DayBoardService:
                     "detail": note.note or note.reason,
                     "state": note.state,
                 })
+            entries.extend(self._checklist_entries(employee.id, day, start, end))
             entries.sort(key=lambda item: item["at"] or datetime.min)
             rows.append({**row, "ledger": entries})
         expected = [row for row in rows if not row["is_off"]]
@@ -194,3 +254,55 @@ class DayBoardService:
             "expected": len(expected),
             "employees": rows,
         }
+
+    def _in_day_window(self, moment: datetime | None, day: date, start: datetime | None, end: datetime | None) -> bool:
+        if not moment:
+            return False
+        if start and end:
+            return start <= moment < end
+        return as_local(moment).date() == day
+
+    def _checklist_entries(self, employee_id: int, day: date, start: datetime | None, end: datetime | None) -> list[dict]:
+        assignments = (
+            self.db.query(XEmployeeAssignment)
+            .filter_by(company_id=self.company_id, employee_id=employee_id)
+            .all()
+        )
+        if not assignments:
+            return []
+        templates = {
+            item.id: item.name
+            for item in self.db.query(XAssignmentTemplate).filter(
+                XAssignmentTemplate.id.in_([assignment.template_id for assignment in assignments] or [0])
+            ).all()
+        }
+        entries: list[dict] = []
+        for assignment in assignments:
+            template_name = templates.get(assignment.template_id, "Checklist")
+            if self._in_day_window(assignment.assigned_at, day, start, end):
+                entries.append({
+                    "at": assignment.assigned_at,
+                    "kind": "task",
+                    "kind_label": "Checklist",
+                    "title": f"Asignado: {template_name}",
+                    "detail": "Pendiente de completar" if assignment.state in {"pending", "in_progress"} else assignment.state,
+                    "state": assignment.state,
+                })
+            answers = (
+                self.db.query(XAssignmentAnswer)
+                .filter_by(company_id=self.company_id, employee_assignment_id=assignment.id)
+                .all()
+            )
+            for answer in answers:
+                if not self._in_day_window(answer.answered_at, day, start, end):
+                    continue
+                question = self.db.get(XAssignmentQuestion, answer.question_id)
+                entries.append({
+                    "at": answer.answered_at,
+                    "kind": "task_answer",
+                    "kind_label": "Checklist",
+                    "title": question.name if question else "Ítem de checklist",
+                    "detail": f"{template_name}: el empleado marcó que sí lo hizo",
+                    "state": answer.state,
+                })
+        return entries

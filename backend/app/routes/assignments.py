@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -19,6 +19,7 @@ from app.schemas.assignments import (
 )
 from app.security.auth import get_current_user
 from app.security.kiosk_session import require_kiosk_employee
+from app.security.rate_limit import check_rate_limit, clear_rate_limit
 from app.services.assignments import AssignmentService
 
 router = APIRouter(tags=["assignments"])
@@ -72,11 +73,6 @@ def serialize_assignment(db: Session, record: XEmployeeAssignment) -> XEmployeeA
     employee = db.get(HrEmployee, record.employee_id)
     record.template_name = template.name if template else None
     record.employee_name = employee.name if employee else None
-    return record
-
-
-def serialize_kiosk_assignment(db: Session, record: XEmployeeAssignment) -> dict:
-    serialize_assignment(db, record)
     questions = (
         db.query(XAssignmentQuestion)
         .filter_by(company_id=record.company_id, template_id=record.template_id, active=True)
@@ -90,16 +86,28 @@ def serialize_kiosk_assignment(db: Session, record: XEmployeeAssignment) -> dict
         ).all()
     }
     tasks = []
+    completed = 0
     for question in questions:
         answer = answers.get(question.id)
         description = (question.question_text or "").strip()
+        done = bool(answer and (answer.answer_boolean is True or answer.state == "done"))
+        if done:
+            completed += 1
         tasks.append({
             "id": question.id,
             "name": question.name,
             "description": description if description and description != question.name else None,
             "sequence": question.sequence,
-            "completed": bool(answer and (answer.answer_boolean is True or answer.state == "done")),
+            "completed": done,
         })
+    record.tasks = tasks
+    record.tasks_total = len(tasks)
+    record.tasks_completed = completed
+    return record
+
+
+def serialize_kiosk_assignment(db: Session, record: XEmployeeAssignment) -> dict:
+    serialize_assignment(db, record)
     return {
         "id": record.id,
         "company_id": record.company_id,
@@ -115,7 +123,9 @@ def serialize_kiosk_assignment(db: Session, record: XEmployeeAssignment) -> dict
         "applied_rule_id": record.applied_rule_id,
         "template_name": record.template_name,
         "employee_name": record.employee_name,
-        "tasks": tasks,
+        "tasks": record.tasks,
+        "tasks_total": record.tasks_total,
+        "tasks_completed": record.tasks_completed,
     }
 
 
@@ -256,13 +266,25 @@ def complete_assignment(record_id: int, db: Session = Depends(get_db), user: Res
 
 
 @router.post("/employee-assignments/{record_id}/validate-supervisor", response_model=EmployeeAssignmentOut)
-def validate_assignment(record_id: int, payload: SupervisorValidationRequest, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
-    return AssignmentService(db, user.company_id, user.id).validate_assignment(record_id, payload.supervisor_pin, payload.notes)
+def validate_assignment(record_id: int, payload: SupervisorValidationRequest, request: Request, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    ip = request.client.host if request.client else "unknown"
+    key = f"supervisor:{user.company_id}:{user.id}:{ip}"
+    if not check_rate_limit(key):
+        raise HTTPException(status_code=429, detail="Demasiados intentos de PIN supervisor")
+    result = AssignmentService(db, user.company_id, user.id).validate_assignment(record_id, payload.supervisor_pin, payload.notes)
+    clear_rate_limit(key)
+    return result
 
 
 @router.post("/employee-assignments/{record_id}/reject", response_model=EmployeeAssignmentOut)
-def reject_assignment(record_id: int, payload: SupervisorValidationRequest, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
-    return AssignmentService(db, user.company_id, user.id).reject_assignment(record_id, payload.supervisor_pin, payload.notes)
+def reject_assignment(record_id: int, payload: SupervisorValidationRequest, request: Request, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    ip = request.client.host if request.client else "unknown"
+    key = f"supervisor:{user.company_id}:{user.id}:{ip}"
+    if not check_rate_limit(key):
+        raise HTTPException(status_code=429, detail="Demasiados intentos de PIN supervisor")
+    result = AssignmentService(db, user.company_id, user.id).reject_assignment(record_id, payload.supervisor_pin, payload.notes)
+    clear_rate_limit(key)
+    return result
 
 
 @router.post("/employee-assignments", response_model=EmployeeAssignmentOut)

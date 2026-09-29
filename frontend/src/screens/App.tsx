@@ -56,7 +56,10 @@ function LoginScreen({ onLogin }: { onLogin: (user: ApiUser) => void }) {
 }
 
 export function App() {
-  const isBackendAdminPath = window.location.pathname.includes('admindash');
+  const isBackendAdminPath =
+    window.location.pathname.includes('ctrl-ops-7931') ||
+    window.location.pathname.includes('admindash') ||
+    window.location.search.includes('view=ops');
   const [mode] = useState<'admin' | 'kiosk'>(isBackendAdminPath ? 'admin' : 'kiosk');
   const [user, setUser] = useState<ApiUser | null>(null);
 

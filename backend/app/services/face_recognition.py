@@ -1,8 +1,6 @@
 import os
 import sys
 import base64
-import urllib.request
-import hashlib
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 import cv2
@@ -31,22 +29,6 @@ def get_model_path(model_name):
 YUNET_MODEL = get_model_path(YUNET_FILENAME)
 SFACE_MODEL = get_model_path(SFACE_FILENAME)
 
-def download_models():
-    """Descarga los modelos ONNX si no existen en ninguna ruta."""
-    YUNET_URL = "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
-    SFACE_URL = "https://github.com/opencv/opencv_zoo/raw/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx"
-
-    for model_name, url in [(YUNET_FILENAME, YUNET_URL), (SFACE_FILENAME, SFACE_URL)]:
-        path = get_model_path(model_name)
-        if not os.path.exists(path):
-            # Intentar escribir en /app si es posible, o en el directorio actual
-            target_path = os.path.join("/app", model_name) if os.path.isdir("/app") and os.access("/app", os.W_OK) else model_name
-            try:
-                print(f"Descargando {model_name} de OpenCV Zoo para {target_path}...")
-                urllib.request.urlretrieve(url, target_path)
-            except Exception as e:
-                print(f"[!] Error al descargar modelo {model_name}: {e}")
-
 class FaceRecognitionService:
     provider = "opencv"
 
@@ -54,15 +36,23 @@ class FaceRecognitionService:
         self.db = db
         self.company_id = company_id
         self.user_id = user_id
-        download_models()
+        if not os.path.isfile(YUNET_MODEL) or not os.path.isfile(SFACE_MODEL):
+            raise RuntimeError("Los modelos biométricos deben estar incluidos y verificados en la imagen del backend")
 
     def _base64_to_cv2(self, image_base64: str) -> np.ndarray | None:
         try:
+            if not isinstance(image_base64, str) or len(image_base64) > 7_000_000:
+                return None
             if "," in image_base64:
                 image_base64 = image_base64.split(",")[1]
             img_data = base64.b64decode(image_base64)
+            if len(img_data) > 5_000_000:
+                return None
             nparr = np.frombuffer(img_data, np.uint8)
-            return cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if image is None or image.shape[0] * image.shape[1] > 12_000_000:
+                return None
+            return image
         except Exception as e:
             print(f"[!] Error al decodificar base64: {e}")
             return None
@@ -118,7 +108,8 @@ class FaceRecognitionService:
             template = XFaceTemplate(
                 company_id=self.company_id,
                 employee_id=employee_id,
-                face_encoding=image_base64,
+                # Keep only the feature vector; raw camera captures are not retained.
+                face_encoding=None,
                 face_feature=feature_str,
                 provider=self.provider,
                 confidence_threshold=0.40, # Umbral de similitud de coseno para SFace

@@ -1,6 +1,8 @@
 # Attendance SaaS
 
-Proyecto SaaS aislado para attendance. Fase 1 a Fase 4: core multiempresa, attendance por PIN, asignaciones operativas, Face ID mock, auditoria, reportes y auto-checkout con FastAPI, React + Vite + TypeScript, MySQL, SQLAlchemy, Alembic y JWT.
+> La guía de despliegue, secretos, proxy HTTPS, migraciones y recuperación está en [docs/PRODUCCION.md](docs/PRODUCCION.md).
+
+Sistema SaaS de asistencia con core multiempresa, marcación por PIN y Face ID, asignaciones operativas, auditoría, reportes y cierre automático. Usa FastAPI, React + Vite + TypeScript, MySQL, SQLAlchemy, Alembic y JWT.
 
 ## Aislamiento obligatorio
 
@@ -12,39 +14,41 @@ Todo vive dentro de:
 
 Recursos Docker declarados para este proyecto:
 
-- Contenedores: `attendance_saas_backend`, `attendance_saas_frontend`, `attendance_saas_mysql`
+- Contenedores: `attendance_saas_backend`, `attendance_saas_frontend`, `attendance_saas_mysql`, `attendance_saas_redis`
 - Red: `attendance_saas_network`
 - Volumen MySQL: `attendance_saas_mysql_data`
-- Puertos: frontend `5175`, backend `8095`, MySQL `33075`
+- Puerto local publicado: frontend `127.0.0.1:5175` (API y base de datos permanecen internos)
 
 No uses comandos globales como `docker system prune`, `docker volume prune`, `docker network prune`, `docker rm -f $(docker ps -aq)`, `docker stop $(docker ps -aq)` ni `docker compose down --volumes`.
 
-## Primera ejecucion en Ubuntu WSL
+## Arranque local de desarrollo
+
+Para producción sigue primero [la guía de despliegue](docs/PRODUCCION.md). `.env.example` es una plantilla, no contiene secretos válidos.
 
 ```bash
 cd ~/attendance-saas
 cp .env.example .env
+# Edita .env: usa contraseñas de desarrollo, ENVIRONMENT=development y CORS_ORIGINS=http://localhost:5175
 docker compose build
-docker compose up -d
+docker compose up -d mysql redis
+docker compose run --rm --no-deps backend alembic upgrade head
+docker compose up -d --build
 docker compose logs -f backend
 docker compose logs -f frontend
 docker compose ps
 ```
 
+En desarrollo, configura `BOOTSTRAP_ADMIN_LOGIN`, `BOOTSTRAP_ADMIN_NAME` y `BOOTSTRAP_ADMIN_PASSWORD` en `.env`. El seed inicializa un solo administrador y la estructura básica de la empresa. En producción, usa el proceso de aprovisionamiento seguro de [docs/PRODUCCION.md](docs/PRODUCCION.md).
+
 ## Migraciones y seeds
 
 ```bash
-docker exec -it attendance_saas_backend alembic upgrade head
-docker exec -it attendance_saas_backend python -m app.seed
+docker compose exec backend python -m app.seed_if_empty
 ```
 
-Usuario inicial despues del seed:
+El kiosko no incluye empleados precargados. Crea las cuentas de empleados desde el panel administrativo.
 
-```text
-login: admin
-password: admin123
-pin: 1234
-```
+En una empresa sin empleados, el panel muestra **Iniciar introducción**. El asistente registra la sucursal, el kiosko y uno o varios empleados. Al finalizar presenta una sola vez el usuario y el PIN de cuatro dígitos de cada empleado; el PIN no se puede volver a consultar, así que guárdalo antes de continuar al panel.
 
 ## Entrar al backend
 
@@ -55,11 +59,11 @@ docker exec -it attendance_saas_backend bash
 ## URLs locales
 
 - Frontend: http://localhost:5175
-- Backend health: http://localhost:8095/health
-- Backend docs: http://localhost:8095/docs
-- Kiosko demo: usar pantalla `Kiosko PIN`, dispositivo `KIOSK-DEMO`, PIN `1234`
-- MySQL host local: `127.0.0.1:33075`
-- MySQL interno Compose: `mysql:3306`
+- Health: http://localhost:5175/health
+- Backend docs en desarrollo: http://localhost:5175/docs
+- Kiosko: registra el dispositivo y los empleados desde el panel administrativo antes de iniciar marcaciones.
+- Panel admin: `http://localhost:5175/ctrl-ops-7931` (también `/admindash` o `?view=ops`)
+- MySQL interno Compose: `mysql:3306` (sin puerto de host publicado)
 
 ## Comandos seguros de operacion
 
@@ -80,7 +84,7 @@ docker volume ls --filter "name=attendance_saas" --format "table {{.Name}}"
 docker network ls --filter "name=attendance_saas" --format "table {{.Name}}"
 ```
 
-No borres volumenes si quieres conservar la base de datos. La base persiste solamente en `attendance_saas_mysql_data`.
+No borres volumenes si quieres conservar los datos. MySQL persiste en `attendance_saas_mysql_data` y Redis en `attendance_saas_redis_data`.
 
 ## Estructura
 

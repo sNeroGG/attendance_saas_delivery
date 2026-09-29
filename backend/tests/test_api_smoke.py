@@ -53,7 +53,10 @@ def test_health_and_full_admin_kiosk_cycle():
     payload = _ok(*_call("GET", "/health"))
     assert payload["service"] == "attendance_saas_backend"
 
-    login = _ok(*_call("POST", "/api/auth/login", {"login": "admin", "password": "admin123"}))
+    admin_password = os.environ.get("SMOKE_ADMIN_PASSWORD")
+    if not admin_password:
+        pytest.skip("Define SMOKE_ADMIN_PASSWORD para ejecutar el smoke test autenticado")
+    login = _ok(*_call("POST", "/api/auth/login", {"login": "admin", "password": admin_password}))
     token = login["access_token"]
     assert login["user"]["login"] == "admin"
     me = _ok(*_call("GET", "/api/auth/me", token=token))
@@ -92,7 +95,7 @@ def test_health_and_full_admin_kiosk_cycle():
 
     kiosk = _ok(*_call("GET", "/api/kiosk/KIOSK-DEMO/config"))
     assert kiosk["device"]["device_code"] == "KIOSK-DEMO"
-    unlock_status, unlock_payload = _call("POST", "/api/kiosk/unlock-device", {"device_code": "KIOSK-DEMO", "pin": "1234"})
+    unlock_status, unlock_payload = _call("POST", "/api/kiosk/unlock-device", {"device_code": "KIOSK-DEMO", "pin": "7931"})
     assert unlock_status == 200, unlock_payload
 
     template = _ok(*_call("POST", "/api/assignment-templates", {
@@ -156,7 +159,7 @@ def test_health_and_full_admin_kiosk_cycle():
     }
     status, created_event = _call("POST", "/api/kiosk/attendance-events", event_payload, token=kiosk_token)
     if status == 409:
-        event_payload["manager_pin"] = "1234"
+        event_payload["manager_pin"] = "7931"
         created_event = _ok(*_call("POST", "/api/kiosk/attendance-events", event_payload, token=kiosk_token))
     else:
         created_event = _ok(status, created_event)
@@ -182,6 +185,11 @@ def test_health_and_full_admin_kiosk_cycle():
     assert toggled["state"] in {"completed", "validated"}
     remaining = _ok(*_call("GET", f"/api/kiosk/employees/{employee['id']}/assignments", token=kiosk_token))
     assert all(item["id"] != assignment["id"] for item in remaining)
+    ledger_after = _ok(*_call("GET", f"/api/employees/{employee['id']}/ledger", token=token))
+    assert any(
+        entry.get("kind") == "task_answer" and "Apertura" in str(entry.get("title"))
+        for entry in ledger_after["entries"]
+    )
 
     other_pin = str(2000 + (int(stamp[4:8], 16) % 7000))
     other = _ok(*_call("POST", "/api/employees", {

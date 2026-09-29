@@ -73,6 +73,31 @@ export class ApiClient {
     return response.json() as Promise<T>;
   }
 
+  async download(path: string, filename: string) {
+    const headers = new Headers();
+    if (this.token) headers.set('Authorization', `Bearer ${this.token}`);
+    const response = await fetch(`${API_BASE_URL}${path}`, { headers });
+    if (!response.ok) {
+      let message = response.statusText;
+      try {
+        const body = await response.json();
+        if (typeof body?.detail === 'string') message = body.detail;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(message || 'No se pudo descargar el archivo');
+    }
+    const blob = await response.blob();
+    const href = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = href;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(href);
+  }
+
   login(login: string, password: string) {
     return this.request<{ access_token: string; user: ApiUser }>('/auth/login', {
       method: 'POST',

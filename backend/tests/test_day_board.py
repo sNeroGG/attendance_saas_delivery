@@ -1,6 +1,7 @@
 from datetime import date, datetime, timezone
 
 from app.services.operational_day import classify_employee_day, past_missing_checkout_deadline
+from app.services.day_board import calendar_csv
 
 
 def _utc(year, month, day, hour, minute=0):
@@ -66,3 +67,23 @@ def test_auto_closed_shift_is_missing_checkout():
     )
     assert result["has_issue"] is True
     assert "No marcó salida" in result["labels"]
+
+
+def test_calendar_csv_includes_bom_and_headers():
+    text = calendar_csv([{
+        "fecha": "2026-09-08",
+        "empleado": "Juan Pérez",
+        "codigo": "EMP-001",
+        "puesto": "Colaborador",
+        "estado": "Faltó",
+        "etiquetas": "Faltó",
+        "entrada": "",
+        "salida": "",
+        "tarde": "",
+        "permiso": "",
+        "dia_libre": "",
+    }])
+    assert text.startswith("\ufeff")
+    assert "fecha,empleado,codigo" in text
+    assert "Juan Pérez" in text
+    assert "EMP-001" in text

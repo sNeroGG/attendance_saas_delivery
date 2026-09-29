@@ -65,7 +65,6 @@ class ResUser(Base, CompanyScopedMixin, AuditMixin, ActiveMixin):
     email: Mapped[str | None] = mapped_column(String(160), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     pin_hash: Mapped[str | None] = mapped_column(String(255))
-    pin_plain: Mapped[str | None] = mapped_column(String(40))
     is_superadmin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_company_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_login: Mapped[datetime | None] = mapped_column(DateTime)
@@ -418,7 +417,7 @@ class XFaceTemplate(Base, CompanyScopedMixin, AuditMixin, ActiveMixin):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     employee_id: Mapped[int] = mapped_column(Integer, index=True, nullable=False)
-    face_encoding: Mapped[str] = mapped_column(Text, nullable=False)
+    face_encoding: Mapped[str | None] = mapped_column(Text, nullable=True)
     face_feature: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider: Mapped[str] = mapped_column(String(40), default="opencv", nullable=False)
     confidence_threshold: Mapped[float] = mapped_column(Float, default=0.40, nullable=False)

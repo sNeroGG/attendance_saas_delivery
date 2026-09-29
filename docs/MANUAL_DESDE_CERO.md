@@ -100,8 +100,9 @@ docker exec -it attendance_saas_backend python -m app.seed
 * **Conexión MySQL local:** `127.0.0.1` en puerto `33075`
 
 ### Credenciales de Demostración Iniciales:
-* **Usuario Administrador:** `admin` (Contraseña: `admin123`)
-* **Código PIN de Kiosko:** `1234`
+* **Usuario Administrador:** `admin` (Contraseña: `[contraseña definida en .env]`) — panel en `/ctrl-ops-7931`
+* **Código PIN de Kiosko / gerente:** `7931`
+* **Empleado Demo:** `juan_perez` (PIN `5824`, código `EMP-001`)
 * **Código de Dispositivo de Prueba:** `KIOSK-DEMO`
 * **Empleado Demo:** `Admin Demo` (ID `1`)
 
@@ -150,7 +151,7 @@ Cuando el usuario presiona **"Iniciar con Face ID"** (o envía el valor mock `de
 
 ## 5. Diseño Responsivo en la Vista Administrativa
 
-La consola de administración (`/admindash`) ha sido optimizada para adaptarse dinámicamente tanto a pantallas amplias de escritorio como a pantallas móviles o tabletas.
+La consola de administración (`/ctrl-ops-7931`) ha sido optimizada para adaptarse dinámicamente tanto a pantallas amplias de escritorio como a pantallas móviles o tabletas.
 
 ### Grid de Distribución y Grid de Formulario:
 * **Distribución Principal (App Shell):** El diseño se basa en un grid de dos columnas en computadoras (`260px` para barra lateral y `1fr` para el área de trabajo principal).
@@ -174,7 +175,7 @@ Para verificar que tus cambios no rompan flujos de negocio fundamentales, comple
 
 | # | Prueba | Acción | Resultado Esperado |
 | :--- | :--- | :--- | :--- |
-| **1** | Login Admin | Entra a `/admindash` con credenciales base. | Acceso correcto al Dashboard. |
+| **1** | Login Admin | Entra a `/ctrl-ops-7931` con `admin` / `[contraseña definida en .env]`. | Acceso correcto al Dashboard. |
 | **2** | Catálogos | Haz clic en Empresa, Sucursales, Empleados. | Carga de tablas sin errores de API. |
 | **3** | Kiosko PIN | Abre Kiosko PIN con `KIOSK-DEMO` y PIN `1234`. | Reconoce a `Admin Demo`. |
 | **4** | Registrar Entrada | Haz clic en "Entrada" en Kiosko. | Crea registro de jornada y habilita break/comida. |

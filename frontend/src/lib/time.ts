@@ -39,3 +39,15 @@ export function fmtDateSV(value: string | null | undefined): string {
     day: '2-digit',
   });
 }
+
+export function fmtLongDateSV(value: string | null | undefined): string {
+  if (!value) return '—';
+  const text = toUTC(value).toLocaleDateString(SV_LOCALE, {
+    timeZone: SV_TZ,
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}

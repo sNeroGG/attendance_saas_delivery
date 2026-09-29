@@ -15,6 +15,11 @@ from app.services.schedules import describe_employee_work
 router = APIRouter(prefix="/kiosk", tags=["kiosk"])
 
 
+def pin_rate_key(device_code: str, request: Request) -> str:
+    client_ip = request.client.host if request.client else "unknown"
+    return f"pin:{device_code}:{client_ip}"
+
+
 def get_device_by_code(db: Session, device_code: str) -> XDevice:
     device = db.query(XDevice).filter_by(device_code=device_code, active=True).first()
     if not device:
@@ -100,10 +105,11 @@ def kiosk_config(device_code: str, request: Request, db: Session = Depends(get_d
 
 
 @router.post("/identify-pin")
-def identify_pin(payload: KioskIdentifyPinRequest, db: Session = Depends(get_db)):
-    if not check_rate_limit(f"pin:{payload.device_code}"):
-        raise HTTPException(status_code=400, detail="Intenta de nuevo")
+def identify_pin(payload: KioskIdentifyPinRequest, request: Request, db: Session = Depends(get_db)):
     device = get_device_by_code(db, payload.device_code)
+    limit_key = pin_rate_key(payload.device_code, request)
+    if not check_rate_limit(limit_key):
+        raise HTTPException(status_code=429, detail="Demasiados intentos. Intenta de nuevo más tarde.")
     users = db.query(ResUser).filter_by(company_id=device.company_id, active=True).all()
     for user in users:
         if verify_secret(payload.pin, user.pin_hash):
@@ -116,7 +122,7 @@ def identify_pin(payload: KioskIdentifyPinRequest, db: Session = Depends(get_db)
             # Check device lock
             check_device_lock(db, device, employee.id)
             
-            clear_rate_limit(f"pin:{payload.device_code}")
+            clear_rate_limit(limit_key)
             access_token = create_access_token(user)
             
             face_template = db.query(XFaceTemplate).filter_by(company_id=device.company_id, employee_id=employee.id, active=True).first()
@@ -132,10 +138,11 @@ def identify_pin(payload: KioskIdentifyPinRequest, db: Session = Depends(get_db)
 
 
 @router.post("/identify-manager-override")
-def identify_manager_override(payload: KioskManagerOverrideRequest, db: Session = Depends(get_db)):
-    if not check_rate_limit(f"pin:{payload.device_code}"):
-        raise HTTPException(status_code=400, detail="Intenta de nuevo")
+def identify_manager_override(payload: KioskManagerOverrideRequest, request: Request, db: Session = Depends(get_db)):
     device = get_device_by_code(db, payload.device_code)
+    limit_key = pin_rate_key(payload.device_code, request)
+    if not check_rate_limit(limit_key):
+        raise HTTPException(status_code=429, detail="Demasiados intentos. Intenta de nuevo más tarde.")
     
     # 1. Validate Manager PIN
     from app.services.supervisor_validation import SupervisorValidationService
@@ -163,7 +170,7 @@ def identify_manager_override(payload: KioskManagerOverrideRequest, db: Session 
         raise HTTPException(status_code=404, detail="PIN de empleado invalido")
 
     check_device_lock(db, device, employee.id)
-    clear_rate_limit(f"pin:{payload.device_code}")
+    clear_rate_limit(limit_key)
     access_token = create_access_token(employee_user)
     face_template = db.query(XFaceTemplate).filter_by(company_id=device.company_id, employee_id=employee.id, active=True).first()
     return {
@@ -212,6 +219,8 @@ def verify_kiosk_face(
     db: Session = Depends(get_db),
     user: ResUser = Depends(get_current_user),
 ):
+    from app.routes.common import require_biometrics_enabled
+    require_biometrics_enabled()
     from app.security.kiosk_session import session_employee_id
     from app.services.face_recognition import FaceRecognitionService
     employee_id = session_employee_id(db, user)
@@ -219,6 +228,9 @@ def verify_kiosk_face(
         raise HTTPException(status_code=403, detail="La sesion del kiosko no esta vinculada a un empleado")
     if not payload.image_base64:
         raise HTTPException(status_code=400, detail="Imagen requerida")
+    client_ip = request.client.host if request.client else "unknown"
+    if not check_rate_limit(f"face-verify:{user.company_id}:{employee_id}:{client_ip}"):
+        raise HTTPException(status_code=429, detail="Demasiadas verificaciones faciales. Intenta más tarde.")
     employee = db.get(HrEmployee, employee_id)
     if not employee or employee.company_id != user.company_id:
         raise HTTPException(status_code=404, detail="Empleado no encontrado")
@@ -239,6 +251,7 @@ def verify_kiosk_face(
 @router.post("/attendance-events", response_model=AttendanceEventOut)
 def create_kiosk_event(
     payload: KioskAttendanceEventCreate,
+    request: Request,
     db: Session = Depends(get_db),
     user: ResUser = Depends(get_current_user),
 ):
@@ -249,11 +262,15 @@ def create_kiosk_event(
     check_device_lock(db, device, payload.employee_id)
     manager_override = False
     if payload.manager_pin:
+        limit_key = pin_rate_key(payload.device_code, request)
+        if not check_rate_limit(limit_key):
+            raise HTTPException(status_code=429, detail="Demasiados intentos. Intenta de nuevo más tarde.")
         from app.services.supervisor_validation import SupervisorValidationService
         try:
             manager = SupervisorValidationService(db, device.company_id).validate_supervisor_pin(payload.manager_pin)
             SupervisorValidationService(db, device.company_id).check_supervisor_permission(manager, "attendance.edit_team")
             manager_override = True
+            clear_rate_limit(limit_key)
         except HTTPException:
             raise
         except Exception:
@@ -273,25 +290,33 @@ def create_kiosk_event(
 
 
 @router.post("/unlock-device")
-def unlock_device(payload: KioskIdentifyPinRequest, db: Session = Depends(get_db)):
+def unlock_device(payload: KioskIdentifyPinRequest, request: Request, db: Session = Depends(get_db)):
     device = get_device_by_code(db, payload.device_code)
+    limit_key = pin_rate_key(payload.device_code, request)
+    if not check_rate_limit(limit_key):
+        raise HTTPException(status_code=429, detail="Demasiados intentos. Intenta de nuevo más tarde.")
     from app.services.supervisor_validation import SupervisorValidationService
     try:
         SupervisorValidationService(db, device.company_id).validate_supervisor_pin(payload.pin)
         device.locked_employee_id = None
         db.commit()
+        clear_rate_limit(limit_key)
         return {"status": "ok", "message": "Dispositivo desbloqueado"}
     except Exception:
         raise HTTPException(status_code=401, detail="PIN de Gerente invalido o sin permisos")
 
 
 @router.post("/verify-manager-pin")
-def verify_manager_pin(payload: KioskIdentifyPinRequest, db: Session = Depends(get_db)):
+def verify_manager_pin(payload: KioskIdentifyPinRequest, request: Request, db: Session = Depends(get_db)):
     device = get_device_by_code(db, payload.device_code)
+    limit_key = pin_rate_key(payload.device_code, request)
+    if not check_rate_limit(limit_key):
+        raise HTTPException(status_code=429, detail="Demasiados intentos. Intenta de nuevo más tarde.")
     from app.services.supervisor_validation import SupervisorValidationService
     try:
         manager = SupervisorValidationService(db, device.company_id).validate_supervisor_pin(payload.pin)
         SupervisorValidationService(db, device.company_id).check_supervisor_permission(manager, "attendance.edit_team")
+        clear_rate_limit(limit_key)
         return {"status": "ok", "message": "PIN de gerente verificado"}
     except Exception:
         raise HTTPException(status_code=401, detail="PIN de Gerente invalido o sin permisos")

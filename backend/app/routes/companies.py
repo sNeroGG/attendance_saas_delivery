@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import ResCompany, ResUser
-from app.routes.common import apply_values, to_dict
+from app.routes.common import apply_values, require_company_admin, to_dict
 from app.schemas.core import CompanyBase, CompanyOut
 from app.security.auth import get_current_user
 
@@ -17,6 +17,7 @@ def current_company(db: Session = Depends(get_db), user: ResUser = Depends(get_c
 
 @router.put("/current", response_model=CompanyOut)
 def update_current_company(payload: CompanyBase, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    require_company_admin(user)
     company = db.get(ResCompany, user.company_id)
     apply_values(company, to_dict(payload), user.id)
     db.commit()

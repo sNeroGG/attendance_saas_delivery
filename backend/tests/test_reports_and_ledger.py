@@ -12,8 +12,8 @@ def test_completed_task_states_cover_finished_work():
 
 def test_ledger_kind_labels_are_plain_language():
     assert KIND_LABELS["attendance"] == "Asistencia"
-    assert KIND_LABELS["task"] == "Tarea"
-    assert KIND_LABELS["task_answer"] == "Respuesta"
+    assert KIND_LABELS["task"] == "Checklist"
+    assert KIND_LABELS["task_answer"] == "Checklist"
     assert KIND_LABELS["audit"] == "Sistema"
 
 

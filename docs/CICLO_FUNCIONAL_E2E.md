@@ -23,7 +23,8 @@ Verificar:
 Entrar al frontend con:
 
 - Login: `admin`
-- Password: `admin123`
+- Password: `[contraseña definida en .env]`
+- Panel: http://localhost:5175/ctrl-ops-7931
 
 Resultado esperado: Dashboard visible.
 
@@ -45,9 +46,9 @@ Resultado esperado: la data demo permite ejecutar el ciclo sin crear registros n
 Abrir Kiosko PIN:
 
 - Device code: `KIOSK-DEMO`
-- PIN: `1234`
+- PIN: `5824`
 
-Resultado esperado: identifica a `Admin Demo`.
+Resultado esperado: identifica a `Juan Pérez` (`juan_perez`).
 
 ### 5. Entrada
 
@@ -139,7 +140,7 @@ Login:
 ```bash
 TOKEN=$(curl -s -X POST http://localhost:8095/api/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"login":"admin","password":"admin123"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+  -d '{"login":"admin","password":"[contraseña definida en .env]"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
 ```
 
 Health:
@@ -159,7 +160,7 @@ Identificacion PIN:
 ```bash
 curl -X POST http://localhost:8095/api/kiosk/identify-pin \
   -H 'Content-Type: application/json' \
-  -d '{"device_code":"KIOSK-DEMO","pin":"1234"}'
+  -d '{"device_code":"KIOSK-DEMO","pin":"5824"}'
 ```
 
 Eventos disponibles:

@@ -1,5 +1,6 @@
 from datetime import datetime
 from fastapi import HTTPException
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -60,7 +61,10 @@ class AssignmentService:
             XEmployeeAssignment.state.notin_(list(COMPLETED_STATES)),
         )
         if shift_id is not None:
-            query = query.filter(XEmployeeAssignment.shift_id == shift_id)
+            query = query.filter(or_(
+                XEmployeeAssignment.shift_id == shift_id,
+                XEmployeeAssignment.shift_id.is_(None),
+            ))
         return query.order_by(XEmployeeAssignment.assigned_at.desc()).all()
 
     def save_assignment_answers(self, employee_assignment_id: int, answers: list[AssignmentAnswerIn]) -> list[XAssignmentAnswer]:

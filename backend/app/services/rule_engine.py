@@ -1,3 +1,4 @@
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models import HrEmployee, XEmployeeRole, XRule
@@ -60,9 +61,12 @@ class RuleEngineService:
             .filter(
                 XEmployeeAssignment.company_id == self.company_id,
                 XEmployeeAssignment.employee_id == employee_id,
-                XEmployeeAssignment.shift_id == shift_id,
                 XEmployeeAssignment.blocks_check_out.is_(True),
                 XEmployeeAssignment.state.in_(["pending", "in_progress", "validation_pending", "rejected"]),
+                or_(
+                    XEmployeeAssignment.shift_id == shift_id,
+                    XEmployeeAssignment.shift_id.is_(None),
+                ),
             )
             .first()
         )

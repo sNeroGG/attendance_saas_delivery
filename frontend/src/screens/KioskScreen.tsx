@@ -38,7 +38,10 @@ type WorkScheduleInfo = {
 };
 
 export function KioskScreen() {
-  const [deviceCode, setDeviceCode] = useState(localStorage.getItem('kiosk_device_code') ?? 'KIOSK-DEMO');
+  const [deviceCode, setDeviceCode] = useState(() => {
+    const savedDevice = localStorage.getItem('kiosk_device_code');
+    return !savedDevice || savedDevice === 'KIOSK-DEMO' ? 'KIOSK-01' : savedDevice;
+  });
   const [pin, setPin] = useState('');
   const [employee, setEmployee] = useState<Record<string, unknown> | null>(null);
   const [events, setEvents] = useState<Record<string, unknown>[]>([]);
@@ -296,6 +299,13 @@ export function KioskScreen() {
     const seq = await enterEmployeeSession(emp, token);
     setAuthMethodUsed(authMethod);
     faceFailCount.current = 0;
+    if (import.meta.env.VITE_BIOMETRICS_ENABLED !== 'true') {
+      setPendingFaceVerify(false);
+      setEmployeeNeedsFaceRegistration(false);
+      setCameraActive(false);
+      setMessage('Acceso correcto con PIN.');
+      return seq;
+    }
     if (!emp.has_face_template) {
       setPendingFaceVerify(false);
       setEmployeeNeedsFaceRegistration(true);
@@ -713,7 +723,8 @@ export function KioskScreen() {
               </label>
 
               <button className="primary" type="submit" disabled={pinCooldown} style={{ minHeight: '48px', fontSize: '16px', borderRadius: '12px', marginTop: '8px', fontWeight: 'bold' }}>
-                <KeyRound size={20} /> Autenticar PIN
+                <KeyRound size={20} />
+                <span className="btn-label">Autenticar PIN</span>
               </button>
 
               <button
@@ -1074,7 +1085,7 @@ export function KioskScreen() {
           <Zap size={16} /> Acciones rápidas
         </button>
         <button className={kioskTab === 'tasks' ? 'active' : ''} type="button" onClick={() => setKioskTab('tasks')}>
-          <ListChecks size={16} /> Tareas asignadas
+          <ListChecks size={16} /> Checklist
           {pendingTaskCount > 0 && <span className="kiosk-tab-count">{pendingTaskCount}</span>}
         </button>
       </div>
@@ -1122,8 +1133,8 @@ export function KioskScreen() {
             {taskSections.map((section) => (
               <section className="kiosk-section" key={section.id}>
                 <div className="kiosk-section-head">
-                  <h3>Sección {section.name}</h3>
-                  <span>{section.pending} de {section.total} por hacer</span>
+                  <h3>{section.name}</h3>
+                  <span>{section.pending} de {section.total} por marcar</span>
                 </div>
                 {section.tasks.map((task) => (
                   <button
@@ -1144,12 +1155,12 @@ export function KioskScreen() {
                   </button>
                 ))}
                 {!section.tasks.length && (
-                  <div className="empty">Esta sección no tiene tareas.</div>
+                  <div className="empty">Marca cada casilla cuando termines el ítem.</div>
                 )}
               </section>
             ))}
             {!taskSections.length && (
-              <div className="empty">No tienes tareas asignadas.</div>
+              <div className="empty">No tienes un checklist asignado. Cuando te asignen uno, marca cada casilla al completarlo; eso queda en tu bitácora.</div>
             )}
           </div>
         </div>

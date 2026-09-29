@@ -1,19 +1,28 @@
 from datetime import date, timedelta
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import HrEmployee, ResUser, XAssignmentTemplate, XEmployeeAssignment, XEmployeeRole, XEmployeeStatusHistory, XFaceTemplate, XRole
-from app.routes.common import apply_values, company_query, get_company_record
+from app.routes.common import apply_values, company_query, get_company_record, require_biometrics_enabled, require_company_admin
 from app.schemas.core import AssignRoleRequest, ChangeStatusRequest, EmployeeIn, EmployeeOut
 from app.schemas.phase4 import LedgerOut
-from app.security.auth import get_current_user
+from app.security.auth import get_current_user, hash_secret
 from app.services.employee_defaults import apply_employee_defaults, assign_templates
 from app.services.ledger import employee_ledger
 from app.services.operational_day import COMPLETED_TASK_STATES, as_local
 from app.services.schedules import employee_role_id, employee_role_name, resolve_employee_schedule, sync_employee_role, window_for_date
+from app.config import get_settings
 
 router = APIRouter(prefix="/employees", tags=["employees"])
+
+
+def resolve_user_password(password: str | None, pin: str | None, login: str) -> str:
+    value = (password or "").strip()
+    if len(value) >= 6:
+        return value
+    generated = f"Acceso#{pin or login or 'User'}"
+    return generated if len(generated) >= 6 else f"{generated}2026"
 
 
 def populate_employee_user_fields(db: Session, employee: HrEmployee) -> HrEmployee:
@@ -25,7 +34,8 @@ def populate_employee_user_fields(db: Session, employee: HrEmployee) -> HrEmploy
         
     if user:
         employee.user_login = user.login
-        employee.user_pin = user.pin_plain
+        # PINs are write-only credentials and must never be returned by employee APIs.
+        employee.user_pin = None
         employee.create_user_profile = True
         if not employee.user_id:
             employee.user_id = user.id
@@ -35,8 +45,8 @@ def populate_employee_user_fields(db: Session, employee: HrEmployee) -> HrEmploy
         employee.create_user_profile = False
 
     # Cargar foto base de Face ID
-    template = db.query(XFaceTemplate).filter_by(employee_id=employee.id, active=True).first()
-    employee.face_image = template.face_encoding if template else None
+    # Raw biometric images must never be returned by employee CRUD endpoints.
+    employee.face_image = None
     employee.role_id = employee_role_id(db, employee.id)
     employee.role_name = employee_role_name(db, employee.company_id, employee.id)
     return employee
@@ -44,6 +54,7 @@ def populate_employee_user_fields(db: Session, employee: HrEmployee) -> HrEmploy
 
 @router.get("", response_model=list[EmployeeOut])
 def list_employees(db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    require_company_admin(user)
     employees = company_query(db, HrEmployee, user).order_by(HrEmployee.name).all()
     for emp in employees:
         populate_employee_user_fields(db, emp)
@@ -52,6 +63,7 @@ def list_employees(db: Session = Depends(get_db), user: ResUser = Depends(get_cu
 
 @router.get("/{record_id}/ledger", response_model=LedgerOut)
 def get_employee_ledger(record_id: int, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    require_company_admin(user)
     get_company_record(db, HrEmployee, record_id, user)
     return employee_ledger(db, user.company_id, record_id)
 
@@ -64,6 +76,7 @@ def employee_task_calendar(
     db: Session = Depends(get_db),
     user: ResUser = Depends(get_current_user),
 ):
+    require_company_admin(user)
     employee = get_company_record(db, HrEmployee, record_id, user)
     today = as_local().date()
     start = start or (today - timedelta(days=today.weekday()))
@@ -124,13 +137,21 @@ def employee_task_calendar(
 
 @router.post("", response_model=EmployeeOut)
 def create_employee(payload: EmployeeIn, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    require_company_admin(user)
     data = payload.model_dump()
     task_template_ids = data.pop("task_template_ids", []) or []
     role_id = data.pop("role_id", None)
     data = apply_employee_defaults(db, user.company_id, user.id, data)
     create_user_profile = data.pop("create_user_profile", True)
+    if create_user_profile is None:
+        create_user_profile = True
     user_login = data.pop("user_login", None)
     user_pin = data.pop("user_pin", None)
+    data.pop("user_password", None)
+    user_password = payload.user_password
+    if get_settings().environment.lower() == "production" and create_user_profile:
+        if not user_password or len(user_password.strip()) < 14 or not user_pin or len(user_pin) < 6 or not user_pin.isdigit():
+            raise HTTPException(status_code=422, detail="En producción se requiere contraseña de 14+ caracteres y PIN numérico de 6+ dígitos")
 
     record = HrEmployee(**data, company_id=user.company_id, create_uid=user.id, write_uid=user.id)
     db.add(record)
@@ -142,17 +163,16 @@ def create_employee(payload: EmployeeIn, db: Session = Depends(get_db), user: Re
         existing_user = db.query(ResUser).filter_by(company_id=user.company_id, login=login_name).first()
         if existing_user:
             login_name = f"{login_name}_{record.id}"
-        
-        from app.security.auth import hash_secret
+
+        password = resolve_user_password(user_password, user_pin, login_name)
         new_user = ResUser(
             company_id=user.company_id,
             employee_id=record.id,
             name=record.name,
             login=login_name,
             email=record.work_email,
-            password_hash=hash_secret("default_dummy_password_123"),
+            password_hash=hash_secret(password),
             pin_hash=hash_secret(user_pin) if user_pin else None,
-            pin_plain=user_pin,
             create_uid=user.id,
             write_uid=user.id,
         )
@@ -176,6 +196,7 @@ def create_employee(payload: EmployeeIn, db: Session = Depends(get_db), user: Re
 
 @router.get("/{record_id}", response_model=EmployeeOut)
 def get_employee(record_id: int, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    require_company_admin(user)
     emp = get_company_record(db, HrEmployee, record_id, user)
     populate_employee_user_fields(db, emp)
     return emp
@@ -183,13 +204,21 @@ def get_employee(record_id: int, db: Session = Depends(get_db), user: ResUser = 
 
 @router.put("/{record_id}", response_model=EmployeeOut)
 def update_employee(record_id: int, payload: EmployeeIn, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    require_company_admin(user)
     record = get_company_record(db, HrEmployee, record_id, user)
     data = payload.model_dump(exclude_unset=True)
     data.pop("task_template_ids", None)
     role_id = data.pop("role_id", None)
-    create_user_profile = data.pop("create_user_profile", False)
+    create_user_profile = data.pop("create_user_profile", True)
     user_login = data.pop("user_login", None)
     user_pin = data.pop("user_pin", None)
+    data.pop("user_password", None)
+    user_password = payload.user_password
+    if get_settings().environment.lower() == "production":
+        if user_password and len(user_password) < 14:
+            raise HTTPException(status_code=422, detail="En producción la contraseña debe tener al menos 14 caracteres")
+        if user_pin and (len(user_pin) < 6 or not user_pin.isdigit()):
+            raise HTTPException(status_code=422, detail="En producción el PIN debe tener al menos 6 dígitos numéricos")
 
     apply_values(record, data, user.id)
     db.flush()
@@ -200,14 +229,14 @@ def update_employee(record_id: int, payload: EmployeeIn, db: Session = Depends(g
     else:
         associated_user = db.query(ResUser).filter_by(employee_id=record.id, company_id=user.company_id).first()
 
-    from app.security.auth import hash_secret
     if associated_user:
         # Update existing user profile
         if user_login:
             associated_user.login = user_login
         if user_pin:
             associated_user.pin_hash = hash_secret(user_pin)
-            associated_user.pin_plain = user_pin
+        if user_password and len(user_password.strip()) >= 6:
+            associated_user.password_hash = hash_secret(user_password.strip())
         associated_user.email = record.work_email
         associated_user.name = record.name
         associated_user.write_uid = user.id
@@ -222,16 +251,15 @@ def update_employee(record_id: int, payload: EmployeeIn, db: Session = Depends(g
         existing_user = db.query(ResUser).filter_by(company_id=user.company_id, login=login_name).first()
         if existing_user:
             login_name = f"{login_name}_{record.id}"
-            
+
         new_user = ResUser(
             company_id=user.company_id,
             employee_id=record.id,
             name=record.name,
             login=login_name,
             email=record.work_email,
-            password_hash=hash_secret("default_dummy_password_123"),
+            password_hash=hash_secret(resolve_user_password(user_password, user_pin, login_name)),
             pin_hash=hash_secret(user_pin) if user_pin else None,
-            pin_plain=user_pin,
             create_uid=user.id,
             write_uid=user.id,
         )
@@ -254,6 +282,7 @@ def update_employee(record_id: int, payload: EmployeeIn, db: Session = Depends(g
 
 @router.post("/{record_id}/change-status", response_model=EmployeeOut)
 def change_status(record_id: int, payload: ChangeStatusRequest, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    require_company_admin(user)
     employee = get_company_record(db, HrEmployee, record_id, user)
     history = XEmployeeStatusHistory(
         company_id=user.company_id,
@@ -275,6 +304,7 @@ def change_status(record_id: int, payload: ChangeStatusRequest, db: Session = De
 
 @router.post("/{record_id}/assign-role")
 def assign_role(record_id: int, payload: AssignRoleRequest, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    require_company_admin(user)
     employee = get_company_record(db, HrEmployee, record_id, user)
     exists = db.query(XEmployeeRole).filter_by(employee_id=employee.id, role_id=payload.role_id).first()
     if not exists:
@@ -285,6 +315,8 @@ def assign_role(record_id: int, payload: AssignRoleRequest, db: Session = Depend
 
 @router.delete("/{record_id}/face")
 def delete_employee_face(record_id: int, db: Session = Depends(get_db), user: ResUser = Depends(get_current_user)):
+    require_biometrics_enabled()
+    require_company_admin(user)
     employee = get_company_record(db, HrEmployee, record_id, user)
     template = db.query(XFaceTemplate).filter_by(company_id=user.company_id, employee_id=employee.id, active=True).first()
     if template:

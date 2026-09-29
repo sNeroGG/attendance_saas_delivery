@@ -12,6 +12,17 @@ def company_query(db: Session, model: type[ModelT], user: ResUser):
     return db.query(model).filter(model.company_id == user.company_id)
 
 
+def require_company_admin(user: ResUser) -> None:
+    if not (user.is_superadmin or user.is_company_admin):
+        raise HTTPException(status_code=403, detail="Se requiere permiso de administración de empresa")
+
+
+def require_biometrics_enabled() -> None:
+    from app.config import get_settings
+    if not get_settings().enable_biometrics:
+        raise HTTPException(status_code=404, detail="La autenticación biométrica está deshabilitada")
+
+
 def get_company_record(db: Session, model: type[ModelT], record_id: int, user: ResUser) -> ModelT:
     record = company_query(db, model, user).filter(model.id == record_id).first()
     if not record:

@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ORMModel(BaseModel):
@@ -60,14 +60,14 @@ class AttendanceEventCreate(BaseModel):
 
 
 class KioskIdentifyPinRequest(BaseModel):
-    device_code: str
-    pin: str
+    device_code: str = Field(min_length=1, max_length=120)
+    pin: str = Field(min_length=1, max_length=12)
 
 
 class KioskManagerOverrideRequest(BaseModel):
-    device_code: str
-    employee_pin: str
-    manager_pin: str
+    device_code: str = Field(min_length=1, max_length=120)
+    employee_pin: str = Field(min_length=1, max_length=12)
+    manager_pin: str = Field(min_length=1, max_length=12)
 
 
 class KioskAttendanceEventCreate(BaseModel):

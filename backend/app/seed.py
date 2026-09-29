@@ -1,8 +1,9 @@
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
-from app.models import HrEmployee, ResCompany, ResUser, XAssignmentQuestion, XAssignmentTemplate, XAttendanceEventType, XAutoCheckoutRule, XDevice, XEmployeeRole, XEmployeeStatus, XPermission, XRole, XRolePermission, XRule
+from app.models import ResCompany, ResUser, XAssignmentQuestion, XAssignmentTemplate, XAttendanceEventType, XAutoCheckoutRule, XEmployeeStatus, XPermission, XRole, XRolePermission
 from app.security.auth import hash_secret
+import os
 from app.services.employee_defaults import resolve_org_defaults
 from app.services.schedules import ensure_default_schedule
 
@@ -39,27 +40,42 @@ STATUSES = [
 
 
 def seed(db: Session) -> None:
-    company = db.query(ResCompany).filter_by(name="Demo Company").first()
+    from app.config import get_settings
+    if get_settings().environment.lower() == "production":
+        raise RuntimeError("Development initialization is disabled in production; provision the administrator securely.")
+    admin_login = os.getenv("BOOTSTRAP_ADMIN_LOGIN", "admin").strip()
+    admin_name = os.getenv("BOOTSTRAP_ADMIN_NAME", "Administrador del Sistema").strip()
+    admin_password = os.getenv("BOOTSTRAP_ADMIN_PASSWORD", "")
+    if not admin_login or not admin_name or len(admin_password) < 14 or "change_me" in admin_password.lower():
+        raise RuntimeError("Define BOOTSTRAP_ADMIN_LOGIN, BOOTSTRAP_ADMIN_NAME y BOOTSTRAP_ADMIN_PASSWORD (14 caracteres minimo) en .env")
+
+    company_name = os.getenv("BOOTSTRAP_COMPANY_NAME", "Empresa Principal").strip()
+    company = db.query(ResCompany).filter_by(name=company_name).first()
     if not company:
-        company = ResCompany(name="Demo Company", legal_name="Demo Company, S.A.", country="El Salvador", create_uid=1, write_uid=1)
+        company = ResCompany(name=company_name, legal_name=company_name, country="Guatemala", create_uid=1, write_uid=1)
         db.add(company)
         db.flush()
 
-    admin = db.query(ResUser).filter_by(login="admin").first()
+    admin = db.query(ResUser).filter_by(login=admin_login).first()
     if not admin:
         admin = ResUser(
             company_id=company.id,
-            name="Admin",
-            login="admin",
-            email="admin@example.com",
-            password_hash=hash_secret("admin123"),
-            pin_hash=hash_secret("1234"),
+            name=admin_name,
+            login=admin_login,
+            email=os.getenv("BOOTSTRAP_ADMIN_EMAIL") or None,
+            password_hash=hash_secret(admin_password),
             is_superadmin=True,
             is_company_admin=True,
             create_uid=1,
             write_uid=1,
         )
         db.add(admin)
+        db.flush()
+    else:
+        admin.name = admin_name
+        admin.email = os.getenv("BOOTSTRAP_ADMIN_EMAIL") or None
+        admin.is_superadmin = True
+        admin.is_company_admin = True
         db.flush()
 
     for item in STATUSES:
@@ -89,16 +105,12 @@ def seed(db: Session) -> None:
             db.add(XRolePermission(role_id=admin_role.id, permission_id=permission_id, create_uid=admin.id))
 
 
-    device = db.query(XDevice).filter_by(company_id=company.id, device_code="KIOSK-DEMO").first()
-    if not device:
-        db.add(XDevice(company_id=company.id, name="Kiosko Demo", device_code="KIOSK-DEMO", device_type="kiosk", create_uid=admin.id, write_uid=admin.id))
-
     for item in EVENT_TYPES:
         exists = db.query(XAttendanceEventType).filter_by(company_id=company.id, code=item["code"]).first()
         if not exists:
             db.add(XAttendanceEventType(company_id=company.id, create_uid=admin.id, write_uid=admin.id, **item))
 
-    resolve_org_defaults(db, company.id, admin.id)
+    resolve_org_defaults(db, company.id, admin.id, create_branch=False)
 
     template = db.query(XAssignmentTemplate).filter_by(company_id=company.id, name="Tareas del día").first()
     if not template:
@@ -144,6 +156,7 @@ if __name__ == "__main__":
     db = SessionLocal()
     try:
         seed(db)
-        print("Seed completed. Login: admin / admin123")
+        print("Seed completado exitosamente.")
+        print("Administrador inicial creado con las credenciales privadas configuradas en .env.")
     finally:
         db.close()

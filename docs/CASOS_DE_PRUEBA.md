@@ -3,7 +3,7 @@
 ## CP-001 Login exitoso
 
 - Precondicion: backend y frontend activos.
-- Pasos: abrir frontend, ingresar `admin` / `admin123`, presionar Entrar.
+- Pasos: abrir `/ctrl-ops-7931`, ingresar `admin` / `[contraseña definida en .env]`, presionar Entrar.
 - Esperado: Dashboard visible.
 - Prioridad: Alta.
 

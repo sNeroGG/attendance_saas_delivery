@@ -9,8 +9,9 @@ Este manual documenta el uso real observado en el sistema existente hasta Fase 4
 - Swagger/OpenAPI: http://localhost:8095/docs
 - Healthcheck: http://localhost:8095/health
 - Usuario demo: `admin`
-- Password demo: `admin123`
-- PIN demo de kiosk: `1234`
+- Password demo: `[contraseña definida en .env]`
+- PIN demo de kiosk / gerente: `7931`
+- Panel admin: `/ctrl-ops-7931` (también `/admindash`)
 - Dispositivo demo: `KIOSK-DEMO`
 - Empleado demo: `Admin Demo`, ID `1`
 - Imagen mock para Face ID: `demo-face-admin`
@@ -38,7 +39,7 @@ No usar comandos globales de limpieza de Docker. Si se detiene algo, hacerlo sol
 
 ### Login
 
-El frontend abre una pantalla de login con valores precargados `admin` y `admin123`. Al iniciar sesion se guarda el token JWT en el cliente y se habilitan las pantallas administrativas.
+El frontend abre una pantalla de login. Acceder con `admin` y `[contraseña definida en .env]` desde `/ctrl-ops-7931`. Al iniciar sesion se guarda el token JWT en el cliente y se habilitan las pantallas administrativas.
 
 ### Dashboard
 

@@ -77,6 +77,9 @@ class EmployeeAssignmentOut(ORMModel):
     applied_rule_id: int | None
     template_name: str | None = None
     employee_name: str | None = None
+    tasks_total: int = 0
+    tasks_completed: int = 0
+    tasks: list[AssignmentTaskStatusOut] = Field(default_factory=list)
 
 
 class KioskAssignmentOut(EmployeeAssignmentOut):

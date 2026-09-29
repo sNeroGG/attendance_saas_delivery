@@ -7,8 +7,8 @@ class ORMModel(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    login: str
-    password: str
+    login: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=1, max_length=128)
 
 
 class TokenResponse(BaseModel):
@@ -56,6 +56,16 @@ class BranchOut(BranchIn, ORMModel):
     company_id: int
 
 
+class FirstRunEmployeeIn(BaseModel):
+    name: str = Field(min_length=2, max_length=180)
+
+
+class FirstRunSetupIn(BaseModel):
+    branch_name: str = Field(min_length=2, max_length=180)
+    device_name: str = Field(min_length=2, max_length=180)
+    employees: list[FirstRunEmployeeIn] = Field(min_length=1, max_length=100)
+
+
 class UserCreate(BaseModel):
     name: str
     login: str
@@ -66,6 +76,8 @@ class UserCreate(BaseModel):
     is_superadmin: bool = False
     is_company_admin: bool = False
     active: bool = True
+    create_employee: bool = True
+    job_title: str | None = None
 
 
 class UserUpdate(BaseModel):
@@ -87,7 +99,6 @@ class UserOut(ORMModel):
     name: str
     login: str
     email: str | None
-    pin_plain: str | None = None
     is_superadmin: bool
     is_company_admin: bool
     active: bool
@@ -160,6 +171,7 @@ class EmployeeIn(BaseModel):
     create_user_profile: bool | None = True
     user_login: str | None = None
     user_pin: str | None = None
+    user_password: str | None = None
     task_template_ids: list[int] = Field(default_factory=list)
 
 
@@ -168,6 +180,7 @@ class EmployeeOut(EmployeeIn, ORMModel):
     company_id: int
     face_image: str | None = None
     role_name: str | None = None
+    user_password: str | None = Field(default=None, exclude=True)
 
 
 class ChangeStatusRequest(BaseModel):

@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ORMModel(BaseModel):
@@ -7,15 +7,15 @@ class ORMModel(BaseModel):
 
 
 class FaceImageRequest(BaseModel):
-    image_base64: str | None = None
-    images: list[str] | None = None
-    device_code: str | None = None
+    image_base64: str | None = Field(default=None, max_length=7_000_000)
+    images: list[str] | None = Field(default=None, max_length=3)
+    device_code: str | None = Field(default=None, max_length=120)
 
 
 class SupervisorFaceValidationRequest(BaseModel):
     image_base64: str
     permission_code: str = "attendance.edit_team"
-    device_code: str | None = None
+    device_code: str | None = Field(default=None, max_length=120)
 
 
 class FaceTemplateOut(ORMModel):

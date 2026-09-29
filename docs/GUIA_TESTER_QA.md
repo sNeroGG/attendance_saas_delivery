@@ -73,16 +73,17 @@ Esperado: revision head de Fase 4.
 - Frontend: http://localhost:5175
 - API docs: http://localhost:8095/docs
 - Login: `admin`
-- Password: `admin123`
-- PIN: `1234`
+- Password: `[contraseña definida en .env]`
+- PIN: `7931`
+- Panel: http://localhost:5175/ctrl-ops-7931
 - Device code: `KIOSK-DEMO`
 - Empleado demo: `Admin Demo`, ID `1`
 - Imagen mock Face ID: `demo-face-admin`
 
 ## Prueba 1 - Login administrativo
 
-1. Abrir http://localhost:5175.
-2. Verificar que aparecen `admin` y `admin123`.
+1. Abrir http://localhost:5175/ctrl-ops-7931.
+2. Ingresar `admin` y `[contraseña definida en .env]`.
 3. Presionar Entrar.
 4. Confirmar que se muestra Dashboard.
 
